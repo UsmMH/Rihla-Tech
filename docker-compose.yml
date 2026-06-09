@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: rihlatech-db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: rihlatech
+      POSTGRES_PASSWORD: rihlatech
+      POSTGRES_DB: rihlatech
+    volumes:
+      - rihlatech_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rihlatech -d rihlatech"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  rihlatech_pgdata:
