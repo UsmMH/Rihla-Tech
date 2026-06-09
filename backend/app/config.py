@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7
+    llm_provider: str = "auto"  # auto | openrouter | gemini | openai
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "openai/gpt-4o-mini"
+    openrouter_site_url: str = "http://localhost:5173"
+    openrouter_app_name: str = "RihlaTech"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
+    openai_api_key: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:

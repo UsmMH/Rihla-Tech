@@ -1,7 +1,7 @@
 # RihlaTech — Development Plan & Handoff
 
 > **Purpose:** Continue development in a new chat without losing context.  
-> **Last updated:** June 2026 · Phases 0–1 complete, Phase 2 next.
+> **Last updated:** June 2026 · **Phases 0–2 complete** · **Phase 3 next** (AI itinerary generation).
 
 ---
 
@@ -23,9 +23,9 @@
 | Backend | FastAPI + SQLAlchemy | `backend/app/` |
 | Database | PostgreSQL 16 (Docker) | Port **5433** (5432 conflicts with local Windows Postgres) |
 | Auth | JWT (python-jose) + bcrypt | 7-day token expiry |
-| AI | OpenAI first (GPT-4o / mini) | Provider abstraction later |
-| Maps | Google Places + Mapbox or Google Maps JS | Free tiers for FYP demo |
-| Flights/Hotels | Duffel API when keys ready; mock data as fallback | Amadeus self-service shuts down July 2026 |
+| AI / LLM | `backend/app/services/llm.py` | **OpenRouter**, **Gemini**, or **OpenAI** via OpenAI-compatible client; set `LLM_PROVIDER` in `.env` |
+| Maps | Google Places + Mapbox or Google Maps JS | Free tiers for FYP demo — Phase 4 |
+| Flights/Hotels | Duffel API when keys ready; mock data as fallback | Phase 6 |
 | Vector DB | Defer — Postgres + pgvector only if needed later | |
 
 ---
@@ -34,7 +34,7 @@
 
 ```bash
 # 1. Env
-cp .env.example .env   # fill JWT_SECRET
+cp .env.example .env   # fill JWT_SECRET + LLM keys (see below)
 
 # 2. Database
 docker compose up -d
@@ -49,15 +49,40 @@ npm run dev
 
 - App: http://localhost:5173  
 - API docs: http://localhost:8000/docs  
-- Health: http://localhost:5173/api/health → `{"status":"ok","database":"connected"}`
+- Health: http://localhost:5173/api/health → `{"status":"ok","database":"connected"}`  
+- LLM status: http://localhost:8000/api/health/llm → `{"configured":true,"provider":"gemini","model":"..."}`
+
+**Restart backend after any `.env` change.**
+
+---
+
+## LLM configuration (working as of Phase 2)
+
+Copy from `.env.example`. Priority is controlled by `LLM_PROVIDER`:
+
+| `LLM_PROVIDER` | Key required | Notes |
+|---|---|---|
+| `gemini` | `GEMINI_API_KEY` | **Currently used in dev.** Google AI Studio key. Recommended model: `gemini-2.5-flash` |
+| `openrouter` | `OPENROUTER_API_KEY` | Set `OPENROUTER_MODEL` (e.g. `openai/gpt-4o-mini`) |
+| `openai` | `OPENAI_API_KEY` | Direct OpenAI |
+| `auto` | First available key | gemini → openrouter → openai |
+
+**Test scripts** (run from `backend/`):
+
+```bash
+.\.venv\Scripts\python scripts\test_llm.py          # basic LLM connectivity
+.\.venv\Scripts\python scripts\test_suggest_flow.py # full destination suggestion (uses latest trip_plan)
+```
+
+**Destination suggestions:** `POST /api/trips/suggest-destinations` uses LLM when configured. On failure (quota, 503, bad JSON) it **falls back to mock cities** (Kyoto, Barcelona, Queenstown). Response includes `source` (`gemini` | `openrouter` | `openai` | `mock`) and `fallback_reason`. City picker UI shows a blue or yellow banner accordingly.
 
 ---
 
 ## Repository state
 
-- **Git:** initialized, first commit on `master` (`6784e53`)
+- **Git:** on `master`; Phase 0–2 work committed locally
 - **Not committed:** `.env`, `node_modules/`, `backend/.venv/`
-- **GitHub:** not pushed yet — user to add remote and push
+- **Deleted (obsolete):** `src/pages/OnboardingQuiz.tsx`, `src/data/quizSteps.ts`
 
 ---
 
@@ -66,34 +91,52 @@ npm run dev
 ```
 Rihla-Tech/
 ├── backend/app/
-│   ├── main.py              # FastAPI app, CORS, create_all on startup
-│   ├── config.py            # Settings from .env
-│   ├── database.py          # SQLAlchemy engine + get_db
-│   ├── models/user.py       # users table
+│   ├── main.py                 # FastAPI, CORS, create_all + seed questions on startup
+│   ├── config.py               # Settings from .env (incl. LLM_PROVIDER, keys)
+│   ├── database.py
+│   ├── data/quiz_seed.py       # 5 quiz + 5 preference questions (idempotent seed)
+│   ├── models/
+│   │   ├── user.py
+│   │   ├── question.py         # Question + AnswerOption (unique phase+key)
+│   │   └── trip_plan.py        # TripPlan + QuizResponse
 │   ├── routers/
-│   │   ├── health.py        # GET /api/health
-│   │   └── auth.py          # register, login, me
-│   ├── services/auth.py     # hash password, JWT, create user
-│   └── dependencies/auth.py # get_current_user (Bearer token)
+│   │   ├── health.py           # GET /api/health, GET /api/health/llm
+│   │   ├── auth.py
+│   │   ├── quiz.py             # questions + submit
+│   │   └── trips.py            # suggest-destinations, select destination
+│   ├── services/
+│   │   ├── auth.py
+│   │   ├── quiz.py
+│   │   ├── destinations.py     # AI + mock destination suggestions
+│   │   └── llm.py              # OpenRouter / Gemini / OpenAI client
+│   └── schemas/                  # auth, user, quiz, trip, health
+├── backend/scripts/
+│   ├── test_llm.py
+│   ├── test_suggest_flow.py
+│   └── test_gemini_models.py
 ├── src/
-│   ├── App.tsx              # Auth routing: /login, /register, / → HomePage
+│   ├── App.tsx                   # Auth routing: /login, /register, / → HomePage
 │   ├── pages/
-│   │   ├── HomePage.tsx     # Trip flow: landing → quiz → result
+│   │   ├── HomePage.tsx          # Trip flow state machine
 │   │   ├── LandingPage.tsx
-│   │   ├── OnboardingQuiz.tsx   # Static quiz (Phase 2 will split)
-│   │   ├── TripResult.tsx
+│   │   ├── QuizPage.tsx          # logistics (API-driven)
+│   │   ├── PreferencesPage.tsx
+│   │   ├── DestinationPickerPage.tsx  # AI city picker ("not sure" path)
+│   │   ├── TripResult.tsx        # still static itinerary — Phase 3
 │   │   ├── LoginPage.tsx
 │   │   └── RegisterPage.tsx
-│   ├── components/layout/   # Navbar (auth-aware), Footer, LogoMark
-│   ├── components/trip/     # ChatbotSidebar
-│   ├── contexts/            # AuthContext, ThemeContext
-│   ├── data/                # Static mock data (replace in Phase 2+)
+│   ├── components/
+│   │   ├── layout/               # Navbar, Footer, LogoMark
+│   │   └── trip/
+│   │       ├── QuestionFlow.tsx       # shared multi-step UI
+│   │       ├── TripDateRangePicker.tsx  # themed calendar range picker
+│   │       ├── TripTravelersInput.tsx   # +/- steppers
+│   │       └── ChatbotSidebar.tsx       # not wired — Phase 5
+│   ├── contexts/                 # AuthContext, ThemeContext
+│   ├── data/                     # itinerary.ts etc. — static until Phase 3
 │   └── lib/
-│       ├── api.ts           # apiFetch + ApiError
-│       ├── auth.ts          # login, register, fetchMe, token storage
-│       ├── navigation.ts    # client-side navigate()
-│       └── trips.ts         # Trip API stubs (not wired yet)
-├── docker-compose.yml       # Postgres on host port 5433
+│       ├── api.ts, auth.ts, quiz.ts, trips.ts, navigation.ts
+├── docker-compose.yml
 ├── .env.example
 └── README.md
 ```
@@ -112,51 +155,72 @@ Rihla-Tech/
 
 ### Phase 1 — Authentication ✅
 
-**Backend endpoints:**
-
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/auth/register` | No | Create account → JWT |
 | POST | `/api/auth/login` | No | Sign in → JWT |
 | GET | `/api/auth/me` | Bearer | Current user |
 
-**User model (`users`):** `id`, `email`, `password` (bcrypt hash), `first_name`, `last_name`, `phone_num`, `is_admin`, `created_at`
+**User model (`users`):** `id`, `email`, `password`, `first_name`, `last_name`, `phone_num`, `is_admin`, `created_at`
 
-**Frontend:**
+**Frontend:** Login/Register, `AuthContext` (`rihlatech_token`, `rihlatech_user`), protected `/`, auth-aware Navbar.
 
-- Login / Register pages with RihlaTech branding
-- `AuthContext` — token in `localStorage` (`rihlatech_token`, `rihlatech_user`)
-- Protected `/` — unauthenticated users → `/login`
-- Navbar shows user name + Log out when authenticated
+### Phase 2 — Quiz + Preferences ✅
 
-**UI cleanup done:**
+**Goal:** Two-step data collection; answers saved in DB; AI destination suggestions when destination unknown.
 
-- Removed Replit artifacts (`mockupPreviewPlugin`, `/preview/*` routes, `.replit-artifact`)
-- Moved UI from `src/components/mockups/rihlaTech/` → proper `src/pages/`, `src/components/layout/`, etc.
-- Navbar: removed Pricing; links scroll to Features / How it Works / Destinations
-- Footer simplified; fake stats/links removed
-- `index.html` branded as RihlaTech
+**Backend endpoints:**
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/quiz/questions?phase=quiz\|preferences` | Bearer | Questions + options for phase |
+| POST | `/api/quiz/submit` | Bearer | Save answers; create/update `trip_plan`; returns `needs_destination_suggestion` after preferences |
+| POST | `/api/trips/suggest-destinations` | Bearer | 3 AI cities + blurb (or mock fallback) |
+| POST | `/api/trips/{id}/destination` | Bearer | User picks suggested city |
+| GET | `/api/health/llm` | No | LLM provider/model status |
+
+**Models:**
+
+- `questions` + `answer_options` — seeded on startup; `phase` = `quiz` | `preferences`; unique `(phase, key)`
+- `trip_plans` — `destination`, `destination_known`, dates, travelers, origin, preferences fields, `status`
+- `quiz_responses` — JSON `value` per question per trip
+
+**Frontend flow (`HomePage.tsx`):**
+
+```
+landing → quiz → preferences → [destination picker if "not sure"] → result
+```
+
+- `QuizPage` / `PreferencesPage` fetch from API via `src/lib/quiz.ts`
+- `QuestionFlow` handles choice, text, date range (calendar), travelers (+/- steppers)
+- Destination question skipped when user chose "not sure"
+- `TripResult` still shows **static** itinerary from `src/data/itinerary.ts`
+
+**Exit criteria met:** User logs in → quiz + preferences → rows in `trip_plans` + `quiz_responses`. "Not sure" path → AI city picker (verified with Gemini).
+
+**Verify Postgres:**
+
+```sql
+SELECT id, destination, destination_known, trip_purpose, theme, status FROM trip_plans ORDER BY id DESC;
+SELECT qr.trip_plan_id, q.key, qr.value FROM quiz_responses qr JOIN questions q ON q.id = qr.question_id ORDER BY qr.trip_plan_id;
+```
 
 ---
 
-## Product decisions (agreed — follow these in Phase 2+)
+## Product decisions (agreed — follow in Phase 3+)
 
-### Quiz vs preferences (two-step flow)
+### Quiz vs preferences
 
-| Step | `phase` field | Content |
+| Step | `phase` | Content |
 |---|---|---|
-| **Quiz** | `"quiz"` | Logistics: dates, destination (or "not sure"), adults/kids, origin city |
-| **Preferences** | `"preferences"` | Personal: trip purpose (fun/heal/explore), theme (historical/modern/natural), budget tier, include flights/hotels toggles |
-
-Keep one `Question` table in ERD; distinguish with `phase` column — don't split into two entities.
+| **Quiz** | `"quiz"` | Dates, destination (or "not sure"), adults/kids, origin (text for now; airport dropdown later) |
+| **Preferences** | `"preferences"` | Purpose (fun/heal/explore), theme (historical/modern/natural), budget tier (eco/mid/luxury), include flights/hotels |
 
 ### Budget tiers
 
-Three tiers: **Eco** / **Mid** / **Luxury** (not dollar ranges for now).
+**Eco** / **Mid** / **Luxury** (not dollar ranges).
 
-### Itinerary shape
-
-Day-by-day with time slots:
+### Itinerary shape (Phase 3)
 
 ```
 Day 1
@@ -165,69 +229,52 @@ Day 1
   evening:   activity
 ```
 
-`PLACE` entity gets `time_slot` attribute (`morning` | `afternoon` | `evening`).
+`PLACE` entity gets `time_slot` (`morning` | `afternoon` | `evening`).
 
-### Uncertain travelers
+### Uncertain destination
 
-- Quiz: "Do you know your destination?" → Yes / Not sure
-- If not sure → preferences → AI returns **3 cities + short blurb** (no extra DB table; API response only)
-- User picks one → full itinerary generated
-
-### Trip plan fields to add (ERD gaps — implement in Phase 2)
-
-On `TRIP_PLAN`: `start_date`, `end_date`, `num_adults`, `num_children`, `include_flights`, `include_hotels`, `origin`
+Quiz → "not sure" → preferences → `suggest-destinations` → user picks → then generate itinerary (Phase 3).
 
 ### Deferred
 
-- Email verification on register (demo uses simple signup)
-- Chat message history table (optional user preference blob later)
-- Arabic / RTL
-- Admin panel (Phase 8)
-- Alembic migrations (using `create_all` for now; add Alembic when schema grows)
-- Community features (Phase 7)
+- Email verification, Arabic/RTL, Alembic (using `create_all` for now)
+- **Edit trip** (re-run quiz as new trip today) — Phase 5
+- Origin city **dropdown** (airports/Places API) — Phase 4 or when Places key ready
+- Admin (Phase 8), Community (Phase 7)
 
 ### MVP build order
 
 1. Auth ✅  
-2. Quiz + preferences + AI itinerary + map  
-3. Edit trip + chatbot  
-4. Flights/hotels + deep-links  
-5. Community  
-6. Admin  
+2. Quiz + preferences + destination AI ✅ (itinerary still static)  
+3. **AI itinerary generation + map** ← **NEXT**  
+4. Edit trip + chatbot  
+5. Flights/hotels + deep-links  
+6. Community  
+7. Admin  
 
 ---
 
-## Phase 2 — Next up (Quiz + Preferences)
+## Phase 3 — Next up (AI trip generation)
 
-**Goal:** Two-step data collection matching the activity diagram; answers saved in DB.
+**Goal:** Replace static itinerary with LLM-generated day-by-day plan; persist places.
 
 ### Backend tasks
 
-- [ ] Models: `Question`, `Answer`, `QuizResponse` (or equivalent), `TripPlan` (minimal)
-- [ ] Seed questions with `phase: "quiz"` and `phase: "preferences"`
-- [ ] `GET /api/quiz/questions?phase=quiz|preferences`
-- [ ] `POST /api/quiz/submit` — save answers linked to user
-- [ ] `POST /api/trips/suggest-destinations` — when destination unknown (OpenAI, 3 cities + blurb)
+- [ ] Model: `Place` (or `places`) linked to `trip_plan` — `time_slot`, `date`, `order`, `name`, `description`, lat/lng nullable
+- [ ] `POST /api/trips/generate` — use `trip_plan` + selected destination; call `llm.py`; structured JSON itinerary
+- [ ] `GET /api/trips/:id` — trip plan + places
+- [ ] Reuse `llm.py`; same retry/JSON parsing patterns as `destinations.py`
 
 ### Frontend tasks
 
-- [ ] Split `OnboardingQuiz.tsx` into **QuizPage** + **PreferencesPage**
-- [ ] Update `HomePage.tsx` flow: `landing → quiz → preferences → [destination picker?] → result`
-- [ ] Fetch questions from API instead of `src/data/quizSteps.ts`
-- [ ] Wire `src/lib/trips.ts` stubs to real endpoints as they're built
+- [ ] Pass `tripPlanId` through flow to `TripResult` (currently result page has no trip context)
+- [ ] Call `generate` after destination selected (or when destination known, after preferences)
+- [ ] Replace `src/data/itinerary.ts` in `TripResult.tsx` with API data
+- [ ] Loading/error states on result page
 
 ### Exit criteria
 
-User logs in → completes quiz + preferences → answers persisted in PostgreSQL.
-
----
-
-## Phase 3 — AI trip generation
-
-- [ ] `TRIP_PLAN` + `PLACE` tables with `time_slot`, `date`, `order`, lat/lng
-- [ ] `POST /api/trips/generate` — OpenAI structured JSON itinerary
-- [ ] `GET /api/trips/:id`
-- [ ] Replace static `src/data/itinerary.ts` in `TripResult.tsx`
+User completes quiz + preferences → sees **real AI itinerary** for their trip stored in DB.
 
 ---
 
@@ -235,21 +282,23 @@ User logs in → completes quiz + preferences → answers persisted in PostgreSQ
 
 - [ ] Google Places enrichment for lat/lng, ratings
 - [ ] Map component with itinerary pins
+- [ ] Origin city dropdown (optional here)
 
 ---
 
 ## Phase 5 — Edit + chatbot
 
 - [ ] `POST /api/trips/:id/edit` — natural language → 3 alternatives
-- [ ] `POST /api/chat/message` — OpenAI with trip context
-- [ ] Wire `ChatbotSidebar.tsx` to real API
+- [ ] `POST /api/chat/message` — LLM with trip context
+- [ ] Wire `ChatbotSidebar.tsx`
+- [ ] "Edit trip" should reload existing trip, not start blank quiz
 
 ---
 
 ## Phase 6 — Flights, hotels, deep-links
 
-- [ ] Duffel integration (or mock + real deep-link URLs)
-- [ ] Only when `include_flights` / `include_hotels` true in preferences
+- [ ] Duffel integration (or mock + deep-link URLs)
+- [ ] Only when `include_flights` / `include_hotels` true
 
 ---
 
@@ -266,39 +315,46 @@ User logs in → completes quiz + preferences → answers persisted in PostgreSQ
 
 ---
 
-## API keys needed (not yet obtained)
+## API keys
 
-- `OPENAI_API_KEY`
-- `GOOGLE_PLACES_API_KEY`
-- `DUFFEL_ACCESS_TOKEN` (optional for Phase 6)
+| Key | Phase | Status |
+|---|---|---|
+| `GEMINI_API_KEY` + `LLM_PROVIDER=gemini` | 2+ | **Configured in dev** |
+| `OPENROUTER_API_KEY` | 2+ | Optional alternative |
+| `OPENAI_API_KEY` | 2+ | Optional fallback |
+| `GOOGLE_PLACES_API_KEY` | 4 | Not yet |
+| `DUFFEL_ACCESS_TOKEN` | 6 | Not yet |
 
-Add to `.env` when ready; never commit `.env`.
+Never commit `.env`. See `.env.example` for all variables.
 
 ---
 
 ## Known gotchas
 
-1. **Postgres port:** Docker maps `5433:5432` because Windows local Postgres uses 5432.
-2. **Backend restart:** Required after `.env` changes.
-3. **Tables:** Created via `Base.metadata.create_all()` on startup — no Alembic yet.
-4. **Static data:** `src/data/*.ts` still powers quiz and itinerary UI until Phase 2–3 APIs are wired.
-5. **Trip flow:** Internal state in `HomePage.tsx` (`useState` page: landing | quiz | result) — not URL routes yet.
+1. **Postgres port:** Docker `5433:5432` (Windows local Postgres on 5432).
+2. **Backend restart:** Required after `.env` changes (`settings` loaded at import).
+3. **Tables:** `create_all` on startup — no Alembic yet.
+4. **Quiz questions duplicated in UI (fixed):** SQLAlchemy `joinedload` on question options requires `.unique()` on the query — see `services/quiz.py`.
+5. **Seed duplicates (fixed):** `quiz_seed.py` dedupes by `(phase, key)` on startup.
+6. **Mock destinations look like AI:** Kyoto / Barcelona / Queenstown = **always mock**. Any other cities = LLM worked. Check `source` in API response or yellow banner on city picker.
+7. **Gemini quotas:** `gemini-2.0-flash` free tier may be exhausted; `gemini-3.5-flash` can 503 under load. Use `gemini-2.5-flash`. Retries (3×) added for transient errors.
+8. **Trip flow:** Internal `useState` in `HomePage.tsx` — not URL routes yet. `tripPlanId` not passed to `TripResult` — fix in Phase 3.
+9. **TripResult:** Static data only until Phase 3 `generate` endpoint.
+10. **Edit trip button:** Restarts quiz as new trip — intentional until Phase 5.
 
 ---
 
-## Prompt for a new chat
-
-Copy this to continue:
+## Handoff prompt (paste into new chat)
 
 ```
-I'm working on RihlaTech (KSU FYP) — AI travel planner.
-Read plan.md and README.md in the repo root for full context.
+I'm continuing RihlaTech (KSU IS498 FYP). Read plan.md and README.md first.
 
-Stack: React/Vite frontend, FastAPI/PostgreSQL backend.
-Phases 0–1 done (setup + JWT auth).
-Next: Phase 2 (quiz + preferences flow).
+Phases 0–2 are done: auth, quiz + preferences (DB-backed), AI destination picker
+(LLM via llm.py — Gemini/OpenRouter/OpenAI). TripResult still uses static itinerary.
 
-Key decisions: quiz=logistics, preferences=personalization,
-budget tiers Eco/Mid/Luxury, day-by-day itinerary with morning/afternoon/evening slots.
-Continue from plan.md Phase 2 tasks.
+Start Phase 3: AI trip generation per plan.md checklist.
+Key files: backend/app/services/llm.py, destinations.py (patterns to reuse),
+trip_plan model, src/pages/TripResult.tsx, src/lib/trips.ts.
 ```
+
+---

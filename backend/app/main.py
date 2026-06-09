@@ -5,12 +5,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import auth, health
+from app.data.quiz_seed import seed_questions
+from app.database import SessionLocal
+from app.routers import auth, health, quiz, trips
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        seed_questions(db)
+    finally:
+        db.close()
     yield
 
 
@@ -26,3 +33,5 @@ app.add_middleware(
 
 app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(auth.router, prefix=settings.api_prefix)
+app.include_router(quiz.router, prefix=settings.api_prefix)
+app.include_router(trips.router, prefix=settings.api_prefix)
