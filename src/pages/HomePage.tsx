@@ -51,8 +51,9 @@ function TripPlanner() {
         />
       )}
 
-      {page === "result" && (
+      {page === "result" && tripPlanId !== null && (
         <TripResult
+          tripPlanId={tripPlanId}
           onEdit={() => setPage("quiz")}
           onHome={resetFlow}
         />

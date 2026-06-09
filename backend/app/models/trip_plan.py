@@ -24,6 +24,7 @@ class TripPlan(Base):
     include_flights: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     include_hotels: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False)
+    itinerary_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -39,6 +40,11 @@ class TripPlan(Base):
     quiz_responses: Mapped[list["QuizResponse"]] = relationship(
         back_populates="trip_plan",
         cascade="all, delete-orphan",
+    )
+    places: Mapped[list["Place"]] = relationship(
+        back_populates="trip_plan",
+        cascade="all, delete-orphan",
+        order_by="Place.day_number, Place.sort_order, Place.id",
     )
 
 

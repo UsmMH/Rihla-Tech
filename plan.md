@@ -343,18 +343,3 @@ Never commit `.env`. See `.env.example` for all variables.
 10. **Edit trip button:** Restarts quiz as new trip — intentional until Phase 5.
 
 ---
-
-## Handoff prompt (paste into new chat)
-
-```
-I'm continuing RihlaTech (KSU IS498 FYP). Read plan.md and README.md first.
-
-Phases 0–2 are done: auth, quiz + preferences (DB-backed), AI destination picker
-(LLM via llm.py — Gemini/OpenRouter/OpenAI). TripResult still uses static itinerary.
-
-Start Phase 3: AI trip generation per plan.md checklist.
-Key files: backend/app/services/llm.py, destinations.py (patterns to reuse),
-trip_plan model, src/pages/TripResult.tsx, src/lib/trips.ts.
-```
-
----

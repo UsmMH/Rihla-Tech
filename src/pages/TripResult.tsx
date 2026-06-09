@@ -1,33 +1,121 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Footer from "@/components/layout/Footer";
 import Navbar from "@/components/layout/Navbar";
 import ChatbotSidebar from "@/components/trip/ChatbotSidebar";
 import { useTheme } from "@/contexts/ThemeContext";
-import { alternatives, itinerary, tripSummary } from "@/data/itinerary";
-
-// TODO: replace with API call — getItinerary(tripId) for all data on this page
+import { ApiError } from "@/lib/api";
+import { alternatives } from "@/data/itinerary";
+import { generateTrip, getTrip, type TripDetail } from "@/lib/trips";
 
 type TripResultProps = {
+  tripPlanId: number;
   onEdit: () => void;
   onHome: () => void;
 };
 
-export default function TripResult({ onEdit, onHome }: TripResultProps) {
+function activityImageSeed(name: string): string {
+  return `https://picsum.photos/seed/${encodeURIComponent(name.replace(/\s/g, ""))}/600/350`;
+}
+
+function sourceLabel(source: string): string {
+  if (source === "gemini") return "Gemini";
+  if (source === "openrouter") return "OpenRouter";
+  if (source === "openai") return "OpenAI";
+  return "Demo";
+}
+
+export default function TripResult({ tripPlanId, onEdit, onHome }: TripResultProps) {
   const { theme } = useTheme();
   const [showAlternatives, setShowAlternatives] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [savedDays, setSavedDays] = useState<number[]>([]);
+  const [trip, setTrip] = useState<TripDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadItinerary = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      try {
+        const existing = await getTrip(tripPlanId);
+        setTrip(existing);
+        return;
+      } catch (err: unknown) {
+        if (!(err instanceof ApiError) || err.status !== 404) {
+          throw err;
+        }
+      }
+      const result = await generateTrip(tripPlanId);
+      setTrip(result);
+    } catch (err: unknown) {
+      setError(err instanceof ApiError ? err.message : "Failed to generate itinerary");
+    } finally {
+      setLoading(false);
+    }
+  }, [tripPlanId]);
+
+  useEffect(() => {
+    loadItinerary();
+  }, [loadItinerary]);
 
   function toggleSave(day: number) {
     setSavedDays((prev) => prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]);
+  }
+
+  if (loading) {
+    return (
+      <div style={{ background: theme.pageBg, minHeight: "100vh" }}>
+        <Navbar onHome={onHome} />
+        <div className="flex flex-col items-center justify-center px-4" style={{ minHeight: "70vh", color: theme.muted }}>
+          <div
+            className="w-10 h-10 rounded-full border-2 border-t-transparent animate-spin mb-4"
+            style={{ borderColor: theme.accentSky, borderTopColor: "transparent" }}
+          />
+          <p style={{ fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}>
+            Generating your AI itinerary...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !trip) {
+    return (
+      <div style={{ background: theme.pageBg, minHeight: "100vh" }}>
+        <Navbar onHome={onHome} />
+        <div className="flex flex-col items-center justify-center gap-4 px-4" style={{ minHeight: "70vh" }}>
+          <p style={{ color: theme.body, fontFamily: "system-ui, sans-serif", textAlign: "center" }}>
+            {error ?? "Something went wrong"}
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={loadItinerary}
+              className="px-4 py-2.5 rounded-xl"
+              style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, color: "#fff", border: "none", fontFamily: "system-ui, sans-serif" }}
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              onClick={onHome}
+              className="px-4 py-2.5 rounded-xl"
+              style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body, fontFamily: "system-ui, sans-serif" }}
+            >
+              Start over
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100vh", transition: "background 0.3s" }}>
       <Navbar onHome={onHome} />
 
-      {/* Hero header */}
       <div
         className="relative"
         style={{
@@ -48,15 +136,14 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
                   YOUR AI-GENERATED ITINERARY
                 </span>
               </div>
-              {/* TODO: replace with API call — getItinerary(tripId) */}
               <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "clamp(1.8rem, 8vw, 3.5rem)", color: theme.heading, lineHeight: 1.1, marginBottom: "0.4rem" }}>
-                {tripSummary.destination}
+                {trip.destination}
               </h1>
               <p style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontStyle: "italic", color: theme.accentLabel, fontSize: "1.05rem" }}>
-                {tripSummary.duration} · {tripSummary.tags}
+                {trip.duration} · {trip.tags}
               </p>
               <div className="flex flex-wrap gap-3 mt-3">
-                {tripSummary.stats.map((stat) => (
+                {trip.stats.map((stat) => (
                   <div key={stat.label} className="flex items-center gap-1.5">
                     <span style={{ color: theme.faint, fontSize: "0.75rem", fontFamily: "system-ui, sans-serif" }}>{stat.label}:</span>
                     <span style={{ color: theme.accentSky, fontWeight: 600, fontSize: "0.85rem", fontFamily: "system-ui, sans-serif" }}>{stat.value}</span>
@@ -92,14 +179,41 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
               </motion.button>
             </div>
           </div>
+
+          {trip.source !== "mock" && (
+            <p
+              className="mt-4 rounded-lg px-3 py-2 text-sm inline-block"
+              style={{
+                background: "rgba(88, 171, 212, 0.12)",
+                border: `1px solid ${theme.accentSky}`,
+                color: theme.accentSky,
+                fontFamily: "system-ui, sans-serif",
+              }}
+            >
+              Generated with {sourceLabel(trip.source)}
+            </p>
+          )}
+
+          {trip.source === "mock" && (
+            <p
+              className="mt-4 rounded-lg px-3 py-2 text-sm inline-block"
+              style={{
+                background: "rgba(234, 179, 8, 0.12)",
+                border: "1px solid rgba(234, 179, 8, 0.4)",
+                color: theme.body,
+                fontFamily: "system-ui, sans-serif",
+              }}
+            >
+              Demo itinerary — AI unavailable
+              {trip.fallback_reason ? `: ${trip.fallback_reason}` : ""}
+            </p>
+          )}
         </div>
       </div>
 
       <div className="max-w-5xl mx-auto px-4 md:px-6 py-8">
-        {/* Itinerary */}
-        {/* TODO: replace with API call — getItinerary(tripId) */}
         <div className="space-y-10">
-          {itinerary.map((dayPlan) => (
+          {trip.itinerary.map((dayPlan) => (
             <div key={dayPlan.day}>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -135,7 +249,7 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
               >
                 {dayPlan.activities.map((activity, aIdx) => (
                   <motion.div
-                    key={activity.name}
+                    key={`${dayPlan.day}-${activity.time_slot}-${activity.name}`}
                     initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: aIdx * 0.08 }}
                     className="rounded-2xl overflow-hidden flex-shrink-0"
                     style={{ background: theme.activityCardBg, border: `1px solid ${theme.activityCardBorder}`, minWidth: "270px", width: "270px", scrollSnapAlign: "start", boxShadow: theme.cardShadow, transition: "background 0.3s" }}
@@ -143,11 +257,10 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = theme.activityCardBorder)}
                   >
                     <div className="relative" style={{ height: "155px", overflow: "hidden" }}>
-                      <img src={activity.img} alt={activity.name} className="w-full h-full object-cover"
+                      <img src={activityImageSeed(activity.name)} alt={activity.name} className="w-full h-full object-cover"
                         style={{ transition: "transform 0.4s" }}
                         onMouseEnter={(e) => ((e.target as HTMLElement).style.transform = "scale(1.05)")}
                         onMouseLeave={(e) => ((e.target as HTMLElement).style.transform = "scale(1)")}
-                        onError={(e) => { (e.target as HTMLImageElement).src = `https://picsum.photos/seed/${activity.name.replace(/\s/g, "")}/600/350`; }}
                       />
                       <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(10,22,40,0.7) 0%, transparent 60%)" }} />
                       <div className="absolute top-3 left-3">
@@ -174,7 +287,6 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
           ))}
         </div>
 
-        {/* Explore Alternatives */}
         <div className="mt-12 mb-4">
           <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
             <h2 style={{ fontFamily: "'DM Serif Display', serif", color: theme.heading, fontSize: "1.4rem" }}>Explore Alternatives</h2>
@@ -204,7 +316,6 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
                 initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
                 transition={{ duration: 0.3 }} className="overflow-hidden"
               >
-                {/* TODO: replace with API call — getAlternatives(tripId) */}
                 <div
                   className="md:grid md:grid-cols-3 md:gap-5"
                   style={{ display: "flex", overflowX: "auto", gap: "12px", paddingBottom: "8px", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}
@@ -254,7 +365,6 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
           </AnimatePresence>
         </div>
 
-        {/* Bottom actions */}
         <div className="mt-10 pt-8 flex flex-col sm:flex-row gap-3" style={{ borderTop: `1px solid ${theme.border}` }}>
           <button onClick={onHome}
             className="w-full sm:w-auto flex-1 px-6 py-3.5 rounded-xl cursor-pointer transition-all"
@@ -264,14 +374,12 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
           >
             ← Start Over
           </button>
-          {/* TODO: replace with API call — shareTripLink(tripId) */}
           <button
             className="w-full sm:w-auto flex-1 px-6 py-3.5 rounded-xl cursor-pointer transition-all"
             style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body, fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}
           >
             Share Trip
           </button>
-          {/* TODO: replace with API call — downloadTripPDF(tripId) */}
           <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
             className="w-full sm:w-auto flex-1 px-6 py-3.5 rounded-xl font-semibold cursor-pointer"
             style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, border: "none", color: "#fff", fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}
@@ -283,7 +391,6 @@ export default function TripResult({ onEdit, onHome }: TripResultProps) {
 
       <Footer />
 
-      {/* Floating AI chat button */}
       <motion.button
         whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.97 }}
         onClick={() => setIsChatOpen(true)}

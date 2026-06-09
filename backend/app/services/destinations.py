@@ -1,4 +1,3 @@
-import json
 import logging
 import time
 
@@ -9,6 +8,7 @@ from app.models.trip_plan import TripPlan
 from app.models.user import User
 from app.schemas.trip import DestinationSuggestion, SuggestDestinationsResponse
 from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
+from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_array
 
 logger = logging.getLogger(__name__)
 
@@ -68,37 +68,6 @@ def _mock_suggestions(trip: TripPlan) -> list[DestinationSuggestion]:
     ]
 
 
-def _parse_llm_destinations(content: str) -> list[dict]:
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, list):
-            return parsed
-        if isinstance(parsed, dict):
-            for key in ("suggestions", "cities", "destinations"):
-                value = parsed.get(key)
-                if isinstance(value, list):
-                    return value
-            return [parsed]
-    except json.JSONDecodeError:
-        pass
-
-    start = text.find("[")
-    end = text.rfind("]")
-    if start != -1 and end > start:
-        return json.loads(text[start : end + 1])
-
-    raise ValueError(f"No JSON array in LLM response: {content[:300]!r}")
-
-
-def _is_retryable_llm_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return any(token in message for token in ("429", "503", "rate", "quota", "high demand", "unavailable"))
-
-
 def _ai_suggestions(trip: TripPlan) -> list[DestinationSuggestion]:
     client = get_llm_client()
     if client is None:
@@ -106,8 +75,8 @@ def _ai_suggestions(trip: TripPlan) -> list[DestinationSuggestion]:
 
     model = get_llm_model()
     prompt = f"""Based on these travel preferences, suggest exactly 3 destination cities.
-Return JSON only: an array of objects with keys "city", "country", "blurb".
-Each blurb should be 1-2 sentences explaining why the city fits.
+Return JSON only: an array of 3 objects with keys "city", "country", "blurb".
+Each blurb must be ONE short sentence (max 100 characters).
 Do not include markdown, code fences, or any text outside the JSON array.
 
 Preferences:
@@ -123,14 +92,15 @@ Preferences:
                     {"role": "system", "content": "You are a travel advisor. Respond with valid JSON only."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.7,
+                temperature=0.5,
+                max_tokens=LLM_MAX_TOKENS,
             )
             content = response.choices[0].message.content or ""
-            raw = _parse_llm_destinations(content)
+            raw = parse_llm_json_array(content, min_items=3)
             return [DestinationSuggestion.model_validate(item) for item in raw[:3]]
         except Exception as exc:
             last_error = exc
-            if _is_retryable_llm_error(exc) and attempt < 2:
+            if is_retryable_llm_error(exc) and attempt < 2:
                 wait = 2 * (attempt + 1)
                 logger.info("LLM attempt %s failed, retrying in %ss: %s", attempt + 1, wait, exc)
                 time.sleep(wait)

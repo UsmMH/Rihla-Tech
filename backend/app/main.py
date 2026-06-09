@@ -4,15 +4,28 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from sqlalchemy import text
+
 from app.database import Base, engine
 from app.data.quiz_seed import seed_questions
 from app.database import SessionLocal
 from app.routers import auth, health, quiz, trips
 
 
+def _ensure_schema_patches() -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE trip_plans "
+                "ADD COLUMN IF NOT EXISTS itinerary_source VARCHAR(30)"
+            )
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _ensure_schema_patches()
     db = SessionLocal()
     try:
         seed_questions(db)

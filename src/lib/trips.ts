@@ -5,14 +5,36 @@ export interface QuizAnswers {
   [stepIndex: number]: string[];
 }
 
-export interface GeneratedTrip {
-  tripId: string;
+export interface TripStat {
+  label: string;
+  value: string;
+}
+
+export interface TripActivity {
+  name: string;
+  time: string;
+  time_slot: string;
+  type: string;
+  desc: string;
+  duration: string;
+}
+
+export interface DayItinerary {
+  day: number;
+  theme: string;
+  date: string | null;
+  activities: TripActivity[];
+}
+
+export interface TripDetail {
+  trip_plan: TripPlan;
   destination: string;
   duration: string;
   tags: string;
-  stats: { label: string; value: string }[];
-  itinerary: unknown[];
-  alternatives: unknown[];
+  stats: TripStat[];
+  itinerary: DayItinerary[];
+  source: string;
+  fallback_reason: string | null;
 }
 
 export interface ChatResponse {
@@ -46,15 +68,18 @@ export async function selectDestination(tripPlanId: number, destination: string)
   });
 }
 
-// Phase 3+ stubs
-
-export async function generateTrip(_answers: QuizAnswers): Promise<GeneratedTrip> {
-  throw new Error("generateTrip: not implemented");
+export async function generateTrip(tripPlanId: number): Promise<TripDetail> {
+  return apiFetch<TripDetail>("/trips/generate", {
+    method: "POST",
+    body: JSON.stringify({ trip_plan_id: tripPlanId }),
+  });
 }
 
-export async function getItinerary(_tripId: string): Promise<GeneratedTrip> {
-  throw new Error("getItinerary: not implemented");
+export async function getTrip(tripPlanId: number): Promise<TripDetail> {
+  return apiFetch<TripDetail>(`/trips/${tripPlanId}`);
 }
+
+// Phase 5+ stubs
 
 export async function getAlternatives(_tripId: string): Promise<unknown[]> {
   throw new Error("getAlternatives: not implemented");
