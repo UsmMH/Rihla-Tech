@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import Navbar from "@/components/layout/Navbar";
+import OriginCityInput from "@/components/trip/OriginCityInput";
 import TripDateRangePicker from "@/components/trip/TripDateRangePicker";
 import TripTravelersInput from "@/components/trip/TripTravelersInput";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -218,7 +219,22 @@ export default function QuestionFlow({
                 </div>
               )}
 
-              {step.question_type === "text" && (
+              {step.question_type === "text" && (step.key === "origin" || step.key === "destination") && (
+                <OriginCityInput
+                  value={(selected as string) ?? ""}
+                  onChange={setAnswer}
+                  placeholder={
+                    step.key === "origin"
+                      ? "Search your departure city..."
+                      : "Search your destination..."
+                  }
+                  suggestionsTitle={
+                    step.key === "origin" ? "SUGGESTED CITIES" : "SUGGESTED DESTINATIONS"
+                  }
+                />
+              )}
+
+              {step.question_type === "text" && step.key !== "origin" && step.key !== "destination" && (
                 <input
                   type="text"
                   value={(selected as string) ?? ""}
@@ -250,7 +266,7 @@ export default function QuestionFlow({
             </motion.div>
           </AnimatePresence>
 
-          <div className="flex items-center justify-between mt-4 gap-3">
+          <div className="flex items-center justify-between mt-6 gap-3">
             <button
               type="button"
               onClick={handleBack}

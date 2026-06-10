@@ -13,9 +13,11 @@ from app.schemas.trip import (
     ActivityPublic,
     DayItineraryPublic,
     GenerateTripResponse,
+    MapPinPublic,
     TripDetailResponse,
     TripStatPublic,
 )
+from app.services.geocoding import enrich_trip_places, mapbox_configured, places_need_spacing_refresh
 from app.services.destinations import _trip_context
 from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
 from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_object
@@ -162,6 +164,8 @@ Rules:
 - Exactly {num_days} days, numbered 1 through {num_days}.
 - Each day must have exactly 3 activities: morning, afternoon, evening (use those time_slot values).
 - Use real places or experiences appropriate for {destination}.
+- Spread activities across different neighborhoods or districts; avoid clustering every day in the same small area.
+- On consecutive days, pick activities in different parts of the city when possible.
 - Match budget tier, theme, and trip purpose from preferences.
 - No markdown, code fences, or text outside the JSON object.
 
@@ -267,12 +271,15 @@ def _build_response(
         day_places = grouped[day_number]
         activities = [
             ActivityPublic(
+                place_id=p.id,
                 name=p.name,
                 time=TIME_SLOT_LABELS.get(p.time_slot, p.time_slot.capitalize()),
                 time_slot=p.time_slot,
                 type=p.activity_type or "Activity",
                 desc=p.description or "",
                 duration=p.duration or "1 hr",
+                latitude=p.latitude,
+                longitude=p.longitude,
             )
             for p in day_places
         ]
@@ -285,6 +292,20 @@ def _build_response(
             )
         )
 
+    map_pins = [
+        MapPinPublic(
+            place_id=p.id,
+            name=p.name,
+            day_number=p.day_number,
+            time_slot=p.time_slot,
+            activity_type=p.activity_type,
+            latitude=p.latitude,
+            longitude=p.longitude,
+        )
+        for p in places
+        if p.latitude is not None and p.longitude is not None
+    ]
+
     num_days = len(itinerary) or _trip_day_count(trip)
     return TripDetailResponse(
         trip_plan=TripPlanPublic.model_validate(trip),
@@ -293,6 +314,9 @@ def _build_response(
         tags=tags_override or _tags_for_trip(trip),
         stats=_stats_for_trip(trip),
         itinerary=itinerary,
+        map_pins=map_pins,
+        geocoding_configured=mapbox_configured(),
+        places_geocoded=len(map_pins),
         source=source,
         fallback_reason=fallback_reason,
     )
@@ -321,8 +345,15 @@ def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailRes
             detail="Itinerary not generated yet",
         )
 
+    places = list(trip.places)
+    missing_coords = any(p.latitude is None or p.longitude is None for p in places)
+    if mapbox_configured() and (missing_coords or places_need_spacing_refresh(places)):
+        enrich_trip_places(db, trip, places)
+        db.refresh(trip)
+        places = list(trip.places)
+
     source = trip.itinerary_source or "generated"
-    return _build_response(trip, list(trip.places), source=source, fallback_reason=None)
+    return _build_response(trip, places, source=source, fallback_reason=None)
 
 
 def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTripResponse:
@@ -365,6 +396,7 @@ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTr
     trip.itinerary_source = source
     db.commit()
     db.refresh(trip)
+    places = list(trip.places)
 
     return GenerateTripResponse(
         **_build_response(trip, places, source, fallback_reason, tags_override).model_dump()

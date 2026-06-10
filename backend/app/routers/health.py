@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 
 from app.database import check_database_connection
-from app.schemas.health import HealthResponse, LlmStatusResponse
+from app.schemas.health import HealthResponse, LlmStatusResponse, MapboxStatusResponse
+from app.services.geocoding import mapbox_configured
 from app.services.llm import get_llm_model, get_llm_provider, llm_configured
 
 router = APIRouter(tags=["health"])
@@ -23,3 +24,8 @@ def llm_status() -> LlmStatusResponse:
         provider=get_llm_provider(),
         model=get_llm_model(),
     )
+
+
+@router.get("/health/mapbox", response_model=MapboxStatusResponse)
+def mapbox_status() -> MapboxStatusResponse:
+    return MapboxStatusResponse(configured=mapbox_configured())

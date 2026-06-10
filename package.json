@@ -39,6 +39,7 @@
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.1.8",
+    "@types/mapbox-gl": "^3.4.1",
     "@types/node": "^22.15.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -66,5 +67,9 @@
     "vaul": "^1.1.2",
     "vite": "^6.3.5",
     "zod": "^3.25.67"
+  },
+  "dependencies": {
+    "mapbox-gl": "^3.24.0",
+    "react-map-gl": "^8.1.1"
   }
 }

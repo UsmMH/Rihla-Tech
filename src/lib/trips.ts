@@ -1,22 +1,31 @@
 import { apiFetch } from "@/lib/api";
 import type { TripPlan } from "@/lib/quiz";
 
-export interface QuizAnswers {
-  [stepIndex: number]: string[];
-}
-
 export interface TripStat {
   label: string;
   value: string;
 }
 
 export interface TripActivity {
+  place_id: number;
   name: string;
   time: string;
   time_slot: string;
   type: string;
   desc: string;
   duration: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export interface MapPin {
+  place_id: number;
+  name: string;
+  day_number: number;
+  time_slot: string;
+  activity_type: string | null;
+  latitude: number;
+  longitude: number;
 }
 
 export interface DayItinerary {
@@ -33,6 +42,9 @@ export interface TripDetail {
   tags: string;
   stats: TripStat[];
   itinerary: DayItinerary[];
+  map_pins: MapPin[];
+  geocoding_configured: boolean;
+  places_geocoded: number;
   source: string;
   fallback_reason: string | null;
 }
@@ -54,6 +66,30 @@ export interface SuggestDestinationsResult {
   fallback_reason: string | null;
 }
 
+function normalizeTripDetail(raw: TripDetail): TripDetail {
+  return {
+    ...raw,
+    map_pins: raw.map_pins ?? [],
+    stats: raw.stats ?? [],
+    geocoding_configured: raw.geocoding_configured ?? false,
+    places_geocoded: raw.places_geocoded ?? 0,
+    itinerary: (raw.itinerary ?? []).map((day) => ({
+      ...day,
+      activities: (day.activities ?? []).map((activity, index) => ({
+        place_id: activity.place_id ?? index,
+        name: activity.name ?? "Activity",
+        time: activity.time ?? "",
+        time_slot: activity.time_slot ?? "morning",
+        type: activity.type ?? "Activity",
+        desc: activity.desc ?? "",
+        duration: activity.duration ?? "1 hr",
+        latitude: activity.latitude ?? null,
+        longitude: activity.longitude ?? null,
+      })),
+    })),
+  };
+}
+
 export async function suggestDestinations(tripPlanId: number): Promise<SuggestDestinationsResult> {
   return apiFetch<SuggestDestinationsResult>("/trips/suggest-destinations", {
     method: "POST",
@@ -69,14 +105,21 @@ export async function selectDestination(tripPlanId: number, destination: string)
 }
 
 export async function generateTrip(tripPlanId: number): Promise<TripDetail> {
-  return apiFetch<TripDetail>("/trips/generate", {
+  const result = await apiFetch<TripDetail>("/trips/generate", {
     method: "POST",
     body: JSON.stringify({ trip_plan_id: tripPlanId }),
   });
+  return normalizeTripDetail(result);
 }
 
 export async function getTrip(tripPlanId: number): Promise<TripDetail> {
-  return apiFetch<TripDetail>(`/trips/${tripPlanId}`);
+  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}`);
+  return normalizeTripDetail(result);
+}
+
+export async function enrichTripPlaces(tripPlanId: number): Promise<TripDetail> {
+  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/enrich-places`, { method: "POST" });
+  return normalizeTripDetail(result);
 }
 
 // Phase 5+ stubs

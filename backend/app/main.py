@@ -9,7 +9,7 @@ from sqlalchemy import text
 from app.database import Base, engine
 from app.data.quiz_seed import seed_questions
 from app.database import SessionLocal
-from app.routers import auth, health, quiz, trips
+from app.routers import auth, health, places, quiz, trips
 
 
 def _ensure_schema_patches() -> None:
@@ -48,3 +48,4 @@ app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(quiz.router, prefix=settings.api_prefix)
 app.include_router(trips.router, prefix=settings.api_prefix)
+app.include_router(places.router, prefix=settings.api_prefix)

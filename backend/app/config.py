@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
     openai_api_key: str | None = None
+    mapbox_access_token: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:

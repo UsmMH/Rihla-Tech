@@ -1,22 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { MapPin } from "lucide-react";
 import Footer from "@/components/layout/Footer";
 import Navbar from "@/components/layout/Navbar";
 import ChatbotSidebar from "@/components/trip/ChatbotSidebar";
+import TripMap from "@/components/trip/TripMap";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
+import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
 import { alternatives } from "@/data/itinerary";
-import { generateTrip, getTrip, type TripDetail } from "@/lib/trips";
+import { enrichTripPlaces, generateTrip, getTrip, type TripDetail } from "@/lib/trips";
 
 type TripResultProps = {
   tripPlanId: number;
   onEdit: () => void;
   onHome: () => void;
 };
-
-function activityImageSeed(name: string): string {
-  return `https://picsum.photos/seed/${encodeURIComponent(name.replace(/\s/g, ""))}/600/350`;
-}
 
 function sourceLabel(source: string): string {
   if (source === "gemini") return "Gemini";
@@ -33,9 +32,15 @@ export default function TripResult({ tripPlanId, onEdit, onHome }: TripResultPro
   const [trip, setTrip] = useState<TripDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<number | null>(null);
+  const [loadingPhase, setLoadingPhase] = useState<"itinerary" | "map">("itinerary");
+  const [geocodingMap, setGeocodingMap] = useState(false);
+  const activityCardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const mapSectionRef = useRef<HTMLDivElement>(null);
 
   const loadItinerary = useCallback(async () => {
     setLoading(true);
+    setLoadingPhase("itinerary");
     setError(null);
     try {
       try {
@@ -60,6 +65,39 @@ export default function TripResult({ tripPlanId, onEdit, onHome }: TripResultPro
     loadItinerary();
   }, [loadItinerary]);
 
+  useEffect(() => {
+    if (!trip?.geocoding_configured || geocodingMap) {
+      return;
+    }
+    const expectedPins = trip.itinerary.reduce((n, d) => n + d.activities.length, 0);
+    if (trip.places_geocoded >= expectedPins) {
+      return;
+    }
+
+    setGeocodingMap(true);
+    enrichTripPlaces(tripPlanId)
+      .then(setTrip)
+      .catch(() => {
+        // Map pins are optional — keep showing the itinerary.
+      })
+      .finally(() => setGeocodingMap(false));
+  }, [trip, tripPlanId, geocodingMap]);
+
+  useEffect(() => {
+    if (selectedPlaceId == null) {
+      return;
+    }
+    const card = activityCardRefs.current.get(selectedPlaceId);
+    card?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  }, [selectedPlaceId]);
+
+  function selectActivity(placeId: number, hasPin: boolean) {
+    setSelectedPlaceId(placeId);
+    if (hasPin) {
+      mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
   function toggleSave(day: number) {
     setSavedDays((prev) => prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]);
   }
@@ -74,7 +112,10 @@ export default function TripResult({ tripPlanId, onEdit, onHome }: TripResultPro
             style={{ borderColor: theme.accentSky, borderTopColor: "transparent" }}
           />
           <p style={{ fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}>
-            Generating your AI itinerary...
+            {loadingPhase === "map" ? "Placing pins on the map..." : "Generating your AI itinerary..."}
+          </p>
+          <p style={{ fontFamily: "system-ui, sans-serif", fontSize: "0.8rem", marginTop: 8, color: theme.faint }}>
+            This can take up to a minute with AI.
           </p>
         </div>
       </div>
@@ -212,6 +253,25 @@ export default function TripResult({ tripPlanId, onEdit, onHome }: TripResultPro
       </div>
 
       <div className="max-w-5xl mx-auto px-4 md:px-6 py-8">
+        <div className="mb-10" ref={mapSectionRef}>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h2 style={{ fontFamily: "'DM Serif Display', serif", color: theme.heading, fontSize: "1.4rem" }}>
+              Trip Map
+            </h2>
+            <span style={{ color: theme.muted, fontSize: "0.8rem", fontFamily: "system-ui, sans-serif" }}>
+              {geocodingMap
+                ? "Geocoding activities..."
+                : `${trip.places_geocoded} of ${trip.itinerary.reduce((n, d) => n + d.activities.length, 0)} activities pinned`}
+            </span>
+          </div>
+          <TripMap
+            pins={trip.map_pins ?? []}
+            geocodingConfigured={trip.geocoding_configured}
+            selectedPlaceId={selectedPlaceId}
+            onSelectPin={setSelectedPlaceId}
+          />
+        </div>
+
         <div className="space-y-10">
           {trip.itinerary.map((dayPlan) => (
             <div key={dayPlan.day}>
@@ -247,41 +307,75 @@ export default function TripResult({ tripPlanId, onEdit, onHome }: TripResultPro
                 className="md:grid md:gap-4 md:grid-cols-3"
                 style={{ display: "flex", overflowX: "auto", gap: "12px", paddingBottom: "8px", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}
               >
-                {dayPlan.activities.map((activity, aIdx) => (
+                {dayPlan.activities.map((activity, aIdx) => {
+                  const typeStyle = getActivityTypeStyle(activity.type);
+                  const TypeIcon = typeStyle.icon;
+                  const isSelected = selectedPlaceId === activity.place_id;
+                  const hasPin = activity.latitude != null && activity.longitude != null;
+                  const dayColor = dayPinColor(dayPlan.day);
+
+                  return (
                   <motion.div
                     key={`${dayPlan.day}-${activity.time_slot}-${activity.name}`}
+                    ref={(el) => {
+                      if (el) {
+                        activityCardRefs.current.set(activity.place_id, el);
+                      } else {
+                        activityCardRefs.current.delete(activity.place_id);
+                      }
+                    }}
                     initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: aIdx * 0.08 }}
-                    className="rounded-2xl overflow-hidden flex-shrink-0"
-                    style={{ background: theme.activityCardBg, border: `1px solid ${theme.activityCardBorder}`, minWidth: "270px", width: "270px", scrollSnapAlign: "start", boxShadow: theme.cardShadow, transition: "background 0.3s" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = theme.activityCardHoverBorder)}
-                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = theme.activityCardBorder)}
+                    className="rounded-2xl overflow-hidden flex-shrink-0 cursor-pointer"
+                    style={{
+                      background: theme.activityCardBg,
+                      border: `1.5px solid ${isSelected ? theme.accentSky : theme.activityCardBorder}`,
+                      borderLeft: `4px solid ${dayColor}`,
+                      minWidth: "270px",
+                      width: "270px",
+                      scrollSnapAlign: "start",
+                      boxShadow: isSelected ? `0 0 0 1px ${theme.accentSky}33` : theme.cardShadow,
+                      transition: "background 0.3s, border-color 0.2s, box-shadow 0.2s",
+                    }}
+                    onClick={() => selectActivity(activity.place_id, hasPin)}
+                    onMouseEnter={(e) => {
+                      if (!isSelected) {
+                        e.currentTarget.style.borderColor = theme.activityCardHoverBorder;
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = isSelected ? theme.accentSky : theme.activityCardBorder;
+                    }}
                   >
-                    <div className="relative" style={{ height: "155px", overflow: "hidden" }}>
-                      <img src={activityImageSeed(activity.name)} alt={activity.name} className="w-full h-full object-cover"
-                        style={{ transition: "transform 0.4s" }}
-                        onMouseEnter={(e) => ((e.target as HTMLElement).style.transform = "scale(1.05)")}
-                        onMouseLeave={(e) => ((e.target as HTMLElement).style.transform = "scale(1)")}
-                      />
-                      <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(10,22,40,0.7) 0%, transparent 60%)" }} />
-                      <div className="absolute top-3 left-3">
-                        <span className="px-2 py-1 rounded-full text-xs"
-                          style={{ background: "rgba(30,75,136,0.7)", border: "1px solid rgba(88,171,212,0.5)", color: "#B5D9EE", fontFamily: "system-ui, sans-serif" }}>
+                    <div
+                      className="flex items-center justify-between px-4 py-3"
+                      style={{ background: typeStyle.gradient }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <TypeIcon size={16} color="#fff" strokeWidth={2} />
+                        <span style={{ color: "#fff", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", fontWeight: 500 }}>
                           {activity.type}
                         </span>
                       </div>
-                      <div className="absolute bottom-2 right-3">
-                        <span style={{ color: "#B5D9EE", fontSize: "0.7rem", fontFamily: "system-ui, sans-serif" }}>{activity.duration}</span>
-                      </div>
+                      <span style={{ color: "rgba(255,255,255,0.9)", fontSize: "0.7rem", fontFamily: "system-ui, sans-serif" }}>
+                        {activity.duration}
+                      </span>
                     </div>
                     <div className="p-4">
                       <div className="flex items-start justify-between gap-2 mb-1.5">
                         <h3 style={{ fontFamily: "'DM Serif Display', serif", color: theme.activityHeading, fontSize: "1rem", lineHeight: 1.2 }}>{activity.name}</h3>
                         <span style={{ color: theme.accentSky, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif", flexShrink: 0, paddingTop: "2px" }}>{activity.time}</span>
                       </div>
-                      <p style={{ color: theme.activityBody, fontSize: "0.8rem", lineHeight: "1.5", fontFamily: "system-ui, sans-serif" }}>{activity.desc}</p>
+                      <p style={{ color: theme.activityBody, fontSize: "0.8rem", lineHeight: "1.5", fontFamily: "system-ui, sans-serif", marginBottom: hasPin ? "0.75rem" : 0 }}>{activity.desc}</p>
+                      {hasPin && (
+                        <div className="flex items-center gap-1.5" style={{ color: isSelected ? theme.accentSky : theme.muted, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif" }}>
+                          <MapPin size={12} strokeWidth={2} />
+                          {isSelected ? "Shown on map" : "View on map"}
+                        </div>
+                      )}
                     </div>
                   </motion.div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))}

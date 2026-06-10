@@ -13,11 +13,16 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  optimizeDeps: {
+    include: ["mapbox-gl"],
+  },
   server: {
     proxy: {
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,
+        timeout: 300_000,
+        proxyTimeout: 300_000,
       },
     },
   },

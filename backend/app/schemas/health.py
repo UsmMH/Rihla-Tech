@@ -10,3 +10,7 @@ class LlmStatusResponse(BaseModel):
     configured: bool
     provider: str
     model: str
+
+
+class MapboxStatusResponse(BaseModel):
+    configured: bool

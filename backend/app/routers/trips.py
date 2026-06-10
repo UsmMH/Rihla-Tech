@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.dependencies.auth import get_current_user
@@ -14,6 +14,8 @@ from app.schemas.trip import (
     TripDetailResponse,
 )
 from app.services.destinations import select_destination, suggest_destinations
+from app.models.trip_plan import TripPlan
+from app.services.geocoding import enrich_trip_places, mapbox_configured
 from app.services.itinerary import generate_itinerary, get_trip_detail
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -43,6 +45,31 @@ def get_trip(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> TripDetailResponse:
+    return get_trip_detail(db, current_user, trip_plan_id)
+
+
+@router.post("/{trip_plan_id}/enrich-places", response_model=TripDetailResponse)
+def enrich_trip_places_endpoint(
+    trip_plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TripDetailResponse:
+    trip = (
+        db.query(TripPlan)
+        .options(joinedload(TripPlan.places))
+        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == current_user.id)
+        .first()
+    )
+    if trip is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
+
+    if mapbox_configured():
+        for place in trip.places:
+            place.latitude = None
+            place.longitude = None
+        db.commit()
+        enrich_trip_places(db, trip)
+
     return get_trip_detail(db, current_user, trip_plan_id)
 
 

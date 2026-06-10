@@ -59,12 +59,31 @@ class DayItineraryPublic(BaseModel):
 
 
 class ActivityPublic(BaseModel):
+    place_id: int
     name: str
     time: str
     time_slot: str
     type: str
     desc: str
     duration: str
+    latitude: float | None = None
+    longitude: float | None = None
+
+
+class MapPinPublic(BaseModel):
+    place_id: int
+    name: str
+    day_number: int
+    time_slot: str
+    activity_type: str | None
+    latitude: float
+    longitude: float
+
+
+class PlaceSearchResult(BaseModel):
+    label: str
+    latitude: float
+    longitude: float
 
 
 class TripDetailResponse(BaseModel):
@@ -74,6 +93,9 @@ class TripDetailResponse(BaseModel):
     tags: str
     stats: list[TripStatPublic]
     itinerary: list[DayItineraryPublic]
+    map_pins: list[MapPinPublic]
+    geocoding_configured: bool
+    places_geocoded: int
     source: str
     fallback_reason: str | None = None
 
