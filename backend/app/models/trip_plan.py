@@ -46,6 +46,11 @@ class TripPlan(Base):
         cascade="all, delete-orphan",
         order_by="Place.day_number, Place.sort_order, Place.id",
     )
+    chat_messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="trip_plan",
+        cascade="all, delete-orphan",
+        order_by="ChatMessage.created_at, ChatMessage.id",
+    )
 
 
 class QuizResponse(Base):

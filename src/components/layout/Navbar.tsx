@@ -8,6 +8,7 @@ import { navigate } from "@/lib/navigation";
 type NavbarProps = {
   onHome?: () => void;
   onStart?: () => void;
+  onMyTrips?: () => void;
 };
 
 const NAV_ITEMS = [
@@ -16,7 +17,7 @@ const NAV_ITEMS = [
   { label: "Destinations", sectionId: "destinations" },
 ] as const;
 
-export default function Navbar({ onHome, onStart }: NavbarProps) {
+export default function Navbar({ onHome, onStart, onMyTrips }: NavbarProps) {
   const { theme, isDark, toggle } = useTheme();
   const { user, isAuthenticated, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -105,6 +106,17 @@ export default function Navbar({ onHome, onStart }: NavbarProps) {
           </button>
           {isAuthenticated && user ? (
             <>
+              {onMyTrips && (
+                <button
+                  onClick={onMyTrips}
+                  className="text-sm px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                  style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = theme.navLinkHover)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = theme.navLinkText)}
+                >
+                  My Trips
+                </button>
+              )}
               <span
                 className="text-sm px-2"
                 style={{ color: theme.navLinkText, fontFamily: "system-ui, sans-serif" }}
@@ -245,6 +257,24 @@ export default function Navbar({ onHome, onStart }: NavbarProps) {
                 >
                   Signed in as {user.first_name}
                 </div>
+                {onMyTrips && (
+                  <button
+                    onClick={() => {
+                      onMyTrips();
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-left py-3 text-sm cursor-pointer"
+                    style={{
+                      color: theme.navLinkText,
+                      background: "none",
+                      border: "none",
+                      borderBottom: `1px solid ${theme.navMenuItemBorder}`,
+                      fontFamily: "system-ui, sans-serif",
+                    }}
+                  >
+                    My Trips
+                  </button>
+                )}
                 {onStart && (
                   <button
                     onClick={() => {

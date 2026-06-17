@@ -9,6 +9,7 @@ import type { ThemeTokens } from "@/themes";
 
 type LandingPageProps = {
   onStart: () => void;
+  onMyTrips?: () => void;
 };
 
 function getFeatureIcon(id: string, theme: ThemeTokens) {
@@ -41,12 +42,12 @@ function getFeatureIcon(id: string, theme: ThemeTokens) {
   );
 }
 
-export default function LandingPage({ onStart }: LandingPageProps) {
+export default function LandingPage({ onStart, onMyTrips }: LandingPageProps) {
   const { theme } = useTheme();
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100vh", overflowX: "hidden", transition: "background 0.3s" }}>
-      <Navbar onStart={onStart} />
+      <Navbar onStart={onStart} onMyTrips={onMyTrips} />
 
       {/* HERO */}
       <section

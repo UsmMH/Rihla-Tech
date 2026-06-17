@@ -28,6 +28,10 @@ export async function apiFetch<T>(
     headers,
   });
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {

@@ -16,6 +16,7 @@ export interface TripActivity {
   duration: string;
   latitude: number | null;
   longitude: number | null;
+  location_confirmed: boolean;
 }
 
 export interface MapPin {
@@ -49,9 +50,50 @@ export interface TripDetail {
   fallback_reason: string | null;
 }
 
+export interface TripListItem {
+  id: number;
+  destination: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  status: string;
+  itinerary_source: string | null;
+  has_itinerary: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TripAlternative {
+  title: string;
+  tagline: string;
+  highlights: string[];
+  budget_note: string;
+  match_percent: number;
+}
+
+export interface EditTripResult {
+  alternatives: TripAlternative[];
+  source: string;
+  fallback_reason: string | null;
+}
+
+export interface StoredChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  proposes_edit: boolean;
+  apply_instruction: string | null;
+  created_at: string;
+}
+
 export interface ChatResponse {
   message: string;
-  updatedItinerary?: unknown;
+  source: string;
+  fallback_reason: string | null;
+  proposes_edit: boolean;
+  apply_instruction: string | null;
+  assistant_message_id: number | null;
+  itinerary_updated: boolean;
+  trip: TripDetail | null;
 }
 
 export interface DestinationSuggestion {
@@ -85,6 +127,7 @@ function normalizeTripDetail(raw: TripDetail): TripDetail {
         duration: activity.duration ?? "1 hr",
         latitude: activity.latitude ?? null,
         longitude: activity.longitude ?? null,
+        location_confirmed: activity.location_confirmed ?? false,
       })),
     })),
   };
@@ -122,35 +165,94 @@ export async function enrichTripPlaces(tripPlanId: number): Promise<TripDetail> 
   return normalizeTripDetail(result);
 }
 
-// Phase 5+ stubs
+const LAST_TRIP_KEY = "rihlatech_last_trip_id";
+const LAST_PAGE_KEY = "rihlatech_last_page";
 
-export async function getAlternatives(_tripId: string): Promise<unknown[]> {
-  throw new Error("getAlternatives: not implemented");
+export function saveLastTripId(tripPlanId: number): void {
+  localStorage.setItem(LAST_TRIP_KEY, String(tripPlanId));
+}
+
+export function loadLastTripId(): number | null {
+  const raw = localStorage.getItem(LAST_TRIP_KEY);
+  if (!raw) return null;
+  const id = Number(raw);
+  return Number.isFinite(id) ? id : null;
+}
+
+export function saveLastPage(page: string): void {
+  localStorage.setItem(LAST_PAGE_KEY, page);
+}
+
+export function loadLastPage(): string | null {
+  return localStorage.getItem(LAST_PAGE_KEY);
+}
+
+export function clearLastTripId(): void {
+  localStorage.removeItem(LAST_TRIP_KEY);
+  localStorage.removeItem(LAST_PAGE_KEY);
+}
+
+export async function listTrips(): Promise<TripListItem[]> {
+  const result = await apiFetch<{ trips: TripListItem[] }>("/trips");
+  return result.trips;
+}
+
+export async function editTrip(
+  tripPlanId: number,
+  prompt = "Suggest 3 alternative destinations similar to this trip.",
+): Promise<EditTripResult> {
+  return apiFetch<EditTripResult>(`/trips/${tripPlanId}/edit`, {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  });
+}
+
+export async function getChatMessages(tripPlanId: number): Promise<StoredChatMessage[]> {
+  const result = await apiFetch<{ messages: StoredChatMessage[] }>(`/chat/${tripPlanId}/messages`);
+  return result.messages;
 }
 
 export async function sendChatMessage(
-  _message: string,
-  _tripId: string,
+  message: string,
+  tripPlanId: number,
 ): Promise<ChatResponse> {
-  throw new Error("sendChatMessage: not implemented");
+  const result = await apiFetch<ChatResponse>("/chat/message", {
+    method: "POST",
+    body: JSON.stringify({ trip_plan_id: tripPlanId, message }),
+  });
+  if (result.trip) {
+    result.trip = normalizeTripDetail(result.trip);
+  }
+  return result;
 }
 
-export async function getChatHistory(_tripId: string): Promise<unknown[]> {
-  throw new Error("getChatHistory: not implemented");
+export async function applyTripEdit(
+  tripPlanId: number,
+  instruction: string,
+  chatMessageId?: number,
+): Promise<TripDetail> {
+  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/apply-edit`, {
+    method: "POST",
+    body: JSON.stringify({
+      instruction,
+      chat_message_id: chatMessageId ?? null,
+    }),
+  });
+  return normalizeTripDetail(result);
 }
 
-export async function getDestinations(): Promise<unknown[]> {
-  throw new Error("getDestinations: not implemented");
+export async function deleteTrip(tripPlanId: number): Promise<void> {
+  await apiFetch<void>(`/trips/${tripPlanId}`, { method: "DELETE" });
 }
 
-export async function saveTrip(_tripId: string): Promise<void> {
-  throw new Error("saveTrip: not implemented");
-}
-
-export async function shareTripLink(_tripId: string): Promise<{ url: string }> {
-  throw new Error("shareTripLink: not implemented");
-}
-
-export async function downloadTripPDF(_tripId: string): Promise<Blob> {
-  throw new Error("downloadTripPDF: not implemented");
+export async function updatePlaceLocation(
+  tripPlanId: number,
+  placeId: number,
+  payload: { label: string; latitude: number; longitude: number; mapbox_id?: string | null },
+): Promise<TripDetail> {
+  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/places/${placeId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return normalizeTripDetail(result);
 }

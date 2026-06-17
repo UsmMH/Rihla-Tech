@@ -9,7 +9,8 @@ from sqlalchemy import text
 from app.database import Base, engine
 from app.data.quiz_seed import seed_questions
 from app.database import SessionLocal
-from app.routers import auth, health, places, quiz, trips
+from app.models.chat_message import ChatMessage  # noqa: F401 — register table
+from app.routers import auth, chat, health, places, quiz, trips
 
 
 def _ensure_schema_patches() -> None:
@@ -18,6 +19,30 @@ def _ensure_schema_patches() -> None:
             text(
                 "ALTER TABLE trip_plans "
                 "ADD COLUMN IF NOT EXISTS itinerary_source VARCHAR(30)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE places "
+                "ADD COLUMN IF NOT EXISTS map_search VARCHAR(255)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE places "
+                "ADD COLUMN IF NOT EXISTS location_hint VARCHAR(255)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE places "
+                "ADD COLUMN IF NOT EXISTS mapbox_id VARCHAR(120)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE places "
+                "ADD COLUMN IF NOT EXISTS location_confirmed BOOLEAN DEFAULT FALSE"
             )
         )
 
@@ -48,4 +73,5 @@ app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(quiz.router, prefix=settings.api_prefix)
 app.include_router(trips.router, prefix=settings.api_prefix)
+app.include_router(chat.router, prefix=settings.api_prefix)
 app.include_router(places.router, prefix=settings.api_prefix)

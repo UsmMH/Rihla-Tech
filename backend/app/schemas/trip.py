@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -68,6 +68,7 @@ class ActivityPublic(BaseModel):
     duration: str
     latitude: float | None = None
     longitude: float | None = None
+    location_confirmed: bool = False
 
 
 class MapPinPublic(BaseModel):
@@ -86,6 +87,20 @@ class PlaceSearchResult(BaseModel):
     longitude: float
 
 
+class ActivityPlaceSearchResult(BaseModel):
+    label: str
+    latitude: float
+    longitude: float
+    mapbox_id: str | None = None
+
+
+class UpdatePlaceLocationRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=255)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    mapbox_id: str | None = Field(default=None, max_length=120)
+
+
 class TripDetailResponse(BaseModel):
     trip_plan: TripPlanPublic
     destination: str
@@ -102,3 +117,79 @@ class TripDetailResponse(BaseModel):
 
 class GenerateTripResponse(TripDetailResponse):
     pass
+
+
+class TripListItem(BaseModel):
+    id: int
+    destination: str | None
+    start_date: date | None
+    end_date: date | None
+    status: str
+    itinerary_source: str | None
+    has_itinerary: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TripListResponse(BaseModel):
+    trips: list[TripListItem]
+
+
+class EditTripRequest(BaseModel):
+    prompt: str = Field(
+        default="Suggest 3 alternative destinations similar to this trip.",
+        min_length=1,
+        max_length=2000,
+    )
+
+
+class TripAlternativePublic(BaseModel):
+    title: str
+    tagline: str
+    highlights: list[str]
+    budget_note: str
+    match_percent: int
+
+
+class EditTripResponse(BaseModel):
+    alternatives: list[TripAlternativePublic]
+    source: str
+    fallback_reason: str | None = None
+
+
+class ChatMessageRequest(BaseModel):
+    trip_plan_id: int
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class ChatMessagePublic(BaseModel):
+    id: int
+    role: str
+    content: str
+    proposes_edit: bool
+    apply_instruction: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[ChatMessagePublic]
+
+
+class ApplyEditRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=4000)
+    chat_message_id: int | None = None
+
+
+class ChatMessageResponse(BaseModel):
+    message: str
+    source: str
+    fallback_reason: str | None = None
+    proposes_edit: bool = False
+    apply_instruction: str | None = None
+    assistant_message_id: int | None = None
+    itinerary_updated: bool = False
+    trip: TripDetailResponse | None = None

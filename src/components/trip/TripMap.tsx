@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 import { useTheme } from "@/contexts/ThemeContext";
+import { fetchWalkingRoute } from "@/lib/mapDirections";
 import { mapboxgl } from "@/lib/mapboxSetup";
 import type { MapPin } from "@/lib/trips";
 
@@ -15,6 +16,7 @@ type TripMapProps = {
   geocodingConfigured: boolean;
   selectedPlaceId?: number | null;
   onSelectPin?: (placeId: number | null) => void;
+  onAdjustPin?: (placeId: number) => void;
 };
 
 type DisplayPin = MapPin & {
@@ -107,6 +109,7 @@ export default function TripMap({
   geocodingConfigured,
   selectedPlaceId = null,
   onSelectPin,
+  onAdjustPin,
 }: TripMapProps) {
   const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -114,9 +117,11 @@ export default function TripMap({
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const popupRef = useRef<mapboxgl.Popup | null>(null);
   const onSelectPinRef = useRef(onSelectPin);
+  const onAdjustPinRef = useRef(onAdjustPin);
   const [mapError, setMapError] = useState<string | null>(null);
 
   onSelectPinRef.current = onSelectPin;
+  onAdjustPinRef.current = onAdjustPin;
 
   const displayPins = useMemo(() => buildDisplayPins(pins ?? []), [pins]);
   const displayPinsRef = useRef(displayPins);
@@ -156,12 +161,32 @@ export default function TripMap({
       markersRef.current = [];
     };
 
-    const addPinsAndRoutes = () => {
+    const clearRouteLayers = () => {
+      const style = map.getStyle();
+      if (!style?.layers) {
+        return;
+      }
+      for (const layer of style.layers) {
+        if (layer.id.startsWith("day-route-line-")) {
+          map.removeLayer(layer.id);
+        }
+      }
+      if (style.sources) {
+        for (const sourceId of Object.keys(style.sources)) {
+          if (sourceId.startsWith("day-route-")) {
+            map.removeSource(sourceId);
+          }
+        }
+      }
+    };
+
+    const addPinsAndRoutes = async () => {
       if (cancelled) {
         return;
       }
 
       clearMarkers();
+      clearRouteLayers();
       map.resize();
       fitMapToPins(map, pinsToShow);
 
@@ -180,6 +205,17 @@ export default function TripMap({
           continue;
         }
 
+        const waypointCoords = sorted.map((p) => [p.displayLng, p.displayLat] as [number, number]);
+        let lineCoords = waypointCoords;
+        const routed = await fetchWalkingRoute(waypointCoords);
+        if (routed) {
+          lineCoords = routed;
+        }
+
+        if (cancelled) {
+          return;
+        }
+
         const sourceId = `day-route-${day}`;
         const layerId = `day-route-line-${day}`;
         if (map.getLayer(layerId)) {
@@ -196,7 +232,7 @@ export default function TripMap({
             properties: {},
             geometry: {
               type: "LineString",
-              coordinates: sorted.map((p) => [p.displayLng, p.displayLat]),
+              coordinates: lineCoords,
             },
           },
         });
@@ -233,19 +269,52 @@ export default function TripMap({
           onSelectPinRef.current?.(pin.place_id);
 
           popupRef.current?.remove();
+
+          const popupRoot = document.createElement("div");
+          popupRoot.style.fontFamily = "system-ui,sans-serif";
+          popupRoot.style.fontSize = "0.85rem";
+          popupRoot.style.maxWidth = "220px";
+
+          const title = document.createElement("div");
+          title.innerHTML = `<strong>Day ${pin.day_number}</strong> · ${pin.time_slot}`;
+          popupRoot.appendChild(title);
+
+          const nameEl = document.createElement("div");
+          nameEl.style.marginTop = "4px";
+          nameEl.textContent = pin.name;
+          popupRoot.appendChild(nameEl);
+
+          if (onAdjustPinRef.current) {
+            const adjustBtn = document.createElement("button");
+            adjustBtn.type = "button";
+            adjustBtn.textContent = "Adjust location";
+            adjustBtn.style.marginTop = "8px";
+            adjustBtn.style.fontSize = "0.75rem";
+            adjustBtn.style.color = "#58ABD4";
+            adjustBtn.style.background = "none";
+            adjustBtn.style.border = "none";
+            adjustBtn.style.padding = "0";
+            adjustBtn.style.cursor = "pointer";
+            adjustBtn.addEventListener("click", (evt) => {
+              evt.stopPropagation();
+              onAdjustPinRef.current?.(pin.place_id);
+              popupRef.current?.remove();
+            });
+            popupRoot.appendChild(adjustBtn);
+          }
+
           popupRef.current = new mapboxgl.Popup({ offset: 12, closeButton: true })
             .setLngLat([pin.displayLng, pin.displayLat])
-            .setHTML(
-              `<div style="font-family:system-ui,sans-serif;font-size:0.85rem;max-width:220px">
-                <strong>Day ${pin.day_number}</strong> · ${pin.time_slot}
-                <div style="margin-top:4px">${pin.name}</div>
-              </div>`,
-            )
+            .setDOMContent(popupRoot)
             .addTo(map);
         });
 
         markersRef.current.push(marker);
       }
+    };
+
+    const addPinsAndRoutesLegacy = () => {
+      void addPinsAndRoutes();
     };
 
     map.on("error", (event) => {
@@ -256,7 +325,7 @@ export default function TripMap({
     });
 
     const onReady = () => {
-      addPinsAndRoutes();
+      addPinsAndRoutesLegacy();
       requestAnimationFrame(() => {
         if (!cancelled) {
           map.resize();
@@ -290,7 +359,7 @@ export default function TripMap({
       map.remove();
       mapRef.current = null;
     };
-  }, [pinSignature, theme.isDark, theme.pageBg]);
+  }, [pinSignature, theme.isDark, theme.pageBg, onAdjustPin]);
 
   useEffect(() => {
     if (!mapRef.current || displayPins.length === 0) {
