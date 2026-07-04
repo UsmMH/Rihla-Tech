@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import AppDashboardPage from "@/pages/AppDashboardPage";
 import CommunityPage from "@/pages/CommunityPage";
+import CommunityTripPage from "@/pages/CommunityTripPage";
 import DestinationPickerPage from "@/pages/DestinationPickerPage";
 import LandingPage from "@/pages/LandingPage";
 import MyTripsPage from "@/pages/MyTripsPage";
@@ -17,6 +18,7 @@ type TripPage =
   | "home"
   | "profile"
   | "community"
+  | "community-trip"
   | "welcome"
   | "quiz"
   | "preferences"
@@ -34,6 +36,7 @@ function tabToPage(tab: AppTab): TripPage {
 function TripPlanner() {
   const [page, setPage] = useState<TripPage>("home");
   const [tripPlanId, setTripPlanId] = useState<number | null>(null);
+  const [communityTripId, setCommunityTripId] = useState<number | null>(null);
 
   function goToAppHome() {
     clearLastPage();
@@ -70,6 +73,12 @@ function TripPlanner() {
     setPage("result");
   }
 
+  function openCommunityTrip(id: number) {
+    setCommunityTripId(id);
+    setPage("community-trip");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   return (
     <div style={{ fontFamily: "system-ui, -apple-system, sans-serif" }} className="min-h-screen">
       {page === "home" && (
@@ -82,7 +91,20 @@ function TripPlanner() {
 
       {page === "profile" && <ProfilePage onNavigate={handleNavigate} />}
 
-      {page === "community" && <CommunityPage onNavigate={handleNavigate} />}
+      {page === "community" && (
+        <CommunityPage onNavigate={handleNavigate} onOpenTrip={openCommunityTrip} />
+      )}
+
+      {page === "community-trip" && communityTripId !== null && (
+        <CommunityTripPage
+          tripPlanId={communityTripId}
+          onBack={() => {
+            setCommunityTripId(null);
+            setPage("community");
+          }}
+          onNavigate={handleNavigate}
+        />
+      )}
 
       {page === "welcome" && (
         <LandingPage

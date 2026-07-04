@@ -10,7 +10,8 @@ from app.database import Base, engine
 from app.data.quiz_seed import seed_questions
 from app.database import SessionLocal
 from app.models.chat_message import ChatMessage  # noqa: F401 — register table
-from app.routers import auth, chat, health, places, quiz, trips
+from app.models.community import TripComment, TripSave, TripVote  # noqa: F401
+from app.routers import auth, chat, community, health, places, quiz, trips
 
 
 def _ensure_schema_patches() -> None:
@@ -45,6 +46,24 @@ def _ensure_schema_patches() -> None:
                 "ADD COLUMN IF NOT EXISTS location_confirmed BOOLEAN DEFAULT FALSE"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE trip_plans "
+                "ADD COLUMN IF NOT EXISTS is_shared BOOLEAN DEFAULT FALSE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE trip_plans "
+                "ADD COLUMN IF NOT EXISTS share_caption VARCHAR(500)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE trip_plans "
+                "ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ"
+            )
+        )
 
 
 @asynccontextmanager
@@ -75,3 +94,4 @@ app.include_router(quiz.router, prefix=settings.api_prefix)
 app.include_router(trips.router, prefix=settings.api_prefix)
 app.include_router(chat.router, prefix=settings.api_prefix)
 app.include_router(places.router, prefix=settings.api_prefix)
+app.include_router(community.router, prefix=settings.api_prefix)

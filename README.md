@@ -34,7 +34,8 @@ Planning a trip means juggling dates, budgets, destinations, and dozens of tabs 
 - **Flights & hotels** — Duffel sandbox flight options + hotel cards with Booking.com links (when enabled in quiz)
 - **Collapsible trip result** — flights, hotels, and each day expand on demand with horizontal activity cards
 - **Google Maps links** — open any activity in Maps; per-day driving routes between stops
-- **App shell** — Home · My Trips · Community (coming soon); Profile on desktop nav + mobile header icon
+- **App shell** — Home · My Trips · Community; Profile on desktop nav + mobile header icon
+- **Community** — share itineraries, discover feed, vote, save, and comment
 - **Light-mode auth** — login and register match the app’s default light theme
 
 > Full roadmap and API reference: [plan.md](plan.md)
@@ -50,8 +51,11 @@ Login → Home dashboard
           └─ My Trips → reopen any itinerary
 
 Trip result → Flights / Hotels (if enabled) → Day-by-day itinerary
+            → Share to Community
             → Ask AI (trip chat) → propose edit → Apply / "yes"
             → Open in Maps / Day route → Back to My Trips
+
+Community → Discover / Saved → open trip → vote, save, comment
 ```
 
 | Step | What happens |
@@ -59,7 +63,8 @@ Trip result → Flights / Hotels (if enabled) → Day-by-day itinerary
 | **Quiz** | Dates, travelers, origin/destination, budget, flight/hotel toggles |
 | **Preferences** | Trip purpose, theme, pace, and personalization |
 | **Destination picker** | Shown only when destination is “not sure” — AI city suggestions |
-| **Result** | Collapsible flights, hotels, and days; Maps deep-links per activity |
+| **Result** | Collapsible flights, hotels, and days; Maps deep-links; share to Community |
+| **Community** | Discover feed, saved trips, vote/save, comments on shared itineraries |
 | **Chat** | Trip-tied edits on result page; general consult from Home |
 
 ---
@@ -74,8 +79,8 @@ flowchart TB
     end
 
     subgraph Server["FastAPI backend"]
-        ROUTERS[Routers: auth · quiz · trips · places · chat]
-        SERVICES[Services: LLM · itinerary · flights · hotels · chat]
+        ROUTERS[Routers: auth · quiz · trips · places · chat · community]
+        SERVICES[Services: LLM · itinerary · flights · hotels · community · chat]
         ROUTERS --> SERVICES
     end
 
@@ -125,7 +130,7 @@ flowchart TB
 | 5b — App shell & mobile | ✅ | Home dashboard, profile, consult chat, responsive pass |
 | 6 — Flights/hotels | ✅ | Duffel sandbox + mock fallback; Booking.com deep-links |
 | 6b — UX polish | ✅ | Collapsible result, light auth, nav + delete dialog |
-| 7 — Community | — | Share, vote, comment |
+| 7 — Community | ✅ | Share, vote, save, comment on shared itineraries |
 | 8 — Admin/deploy | — | Dashboard + cloud hosting |
 
 ---
@@ -196,23 +201,23 @@ npm run typecheck    # TypeScript check
 
 ```
 src/
-  pages/               Home dashboard, quiz, preferences, trip result, my trips, profile
+  pages/               Home dashboard, quiz, trip result, community, my trips, profile
   components/trip/     ChatbotSidebar, QuestionFlow, OriginCityInput
   components/layout/   Navbar, AppBottomNav
   components/auth/     AuthLayout (light mode login/register)
-  lib/                 API client, auth, trips, places, mapDirections
+  lib/                 API client, auth, trips, community, places, mapDirections
 backend/
   app/
-    routers/           auth, quiz, trips, places, chat, health
-    services/          llm, itinerary, flights, hotels, edit, chat, consult_chat
-    models/            user, trip_plan, place, chat_message, question
+    routers/           auth, quiz, trips, places, chat, community, health
+    services/          llm, itinerary, flights, hotels, community, edit, chat, consult_chat
+    models/            user, trip_plan, place, chat_message, community, question
 ```
 
 ---
 
 ## Known limitations
 
-- **Community / admin** — not started (Phases 7–8)
+- **Community / admin** — community live; admin not started (Phase 8)
 - **Consult chat** — session history is client-side only; not persisted to the database
 - **Hotels** — mock cards with Booking.com links (no live hotel API)
 

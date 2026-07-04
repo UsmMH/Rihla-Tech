@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Building2, ChevronDown, ChevronLeft, ExternalLink, MapPin, Plane, Route } from "lucide-react";
+import { Building2, ChevronDown, ChevronLeft, ExternalLink, MapPin, Plane, Route, Share2, X } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
 import ChatbotSidebar from "@/components/trip/ChatbotSidebar";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -13,6 +13,7 @@ import {
 } from "@/lib/mapDirections";
 import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
 import { generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
+import { shareTrip, unshareTrip } from "@/lib/community";
 import type { AppTab } from "@/lib/navigation";
 
 type TripResultProps = {
@@ -310,6 +311,9 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   const [hotelsLoading, setHotelsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareCaption, setShareCaption] = useState("");
+  const [shareBusy, setShareBusy] = useState(false);
 
   const loadItinerary = useCallback(async () => {
     setLoading(true);
@@ -361,6 +365,39 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
       setHotels(null);
     }
   }, [trip, tripPlanId]);
+
+  async function handleShare() {
+    if (!trip || shareBusy) return;
+    setShareBusy(true);
+    try {
+      const result = await shareTrip(tripPlanId, shareCaption || undefined);
+      setTrip({ ...trip, is_shared: result.is_shared, share_caption: result.share_caption });
+      setShareOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof ApiError ? err.message : "Failed to share trip");
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function handleUnshare() {
+    if (!trip || shareBusy) return;
+    setShareBusy(true);
+    try {
+      const result = await unshareTrip(tripPlanId);
+      setTrip({ ...trip, is_shared: result.is_shared, share_caption: result.share_caption });
+      setShareOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof ApiError ? err.message : "Failed to unshare trip");
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  function openShareModal() {
+    setShareCaption(trip?.share_caption ?? "");
+    setShareOpen(true);
+  }
 
   if (loading) {
     return (
@@ -457,6 +494,24 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
             </div>
 
             <div className="flex flex-col gap-2 w-full md:w-auto md:flex-row">
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                onClick={openShareModal}
+                className="inline-flex items-center justify-center gap-2 w-full md:w-auto px-4 py-3 md:py-2.5 rounded-xl cursor-pointer whitespace-nowrap flex-shrink-0 min-h-[44px]"
+                style={{
+                  background: trip.is_shared ? "rgba(88, 171, 212, 0.12)" : theme.optionBg,
+                  border: `1px solid ${trip.is_shared ? theme.accentSky : theme.border}`,
+                  color: trip.is_shared ? theme.accentSky : theme.body,
+                  fontFamily: "system-ui, sans-serif",
+                  fontSize: "0.88rem",
+                  fontWeight: 500,
+                  lineHeight: 1,
+                }}
+              >
+                <Share2 size={16} />
+                {trip.is_shared ? "Shared" : "Share"}
+              </motion.button>
               <motion.button
                 type="button"
                 whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
@@ -700,6 +755,97 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
         initialInput={chatInitialInput}
         onItineraryUpdated={setTrip}
       />
+
+      <AnimatePresence>
+        {shareOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+            style={{ background: "rgba(0,0,0,0.45)" }}
+            onClick={() => !shareBusy && setShareOpen(false)}
+          >
+            <motion.div
+              initial={{ y: 24, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 24, opacity: 0 }}
+              className="w-full max-w-md rounded-2xl p-5"
+              style={{ background: theme.activityCardBg, border: `1px solid ${theme.activityCardBorder}` }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 style={{ fontFamily: "'DM Serif Display', serif", color: theme.heading, fontSize: "1.2rem" }}>
+                  {trip.is_shared ? "Update shared trip" : "Share to Community"}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShareOpen(false)}
+                  className="p-1 cursor-pointer"
+                  style={{ background: "none", border: "none", color: theme.muted }}
+                  aria-label="Close"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <p className="mb-4" style={{ color: theme.body, fontFamily: "system-ui, sans-serif", fontSize: "0.88rem", lineHeight: 1.5 }}>
+                {trip.is_shared
+                  ? "Your itinerary is visible on the Community feed. Add an optional caption or stop sharing."
+                  : "Let other travelers discover your itinerary on the Community feed."}
+              </p>
+              <textarea
+                value={shareCaption}
+                onChange={(e) => setShareCaption(e.target.value)}
+                placeholder="Optional caption (e.g. perfect long weekend in Kyoto)"
+                rows={3}
+                className="w-full px-4 py-3 rounded-xl mb-4 resize-none"
+                style={{
+                  background: theme.optionBg,
+                  border: `1px solid ${theme.border}`,
+                  color: theme.body,
+                  fontFamily: "system-ui, sans-serif",
+                  fontSize: "0.9rem",
+                }}
+              />
+              <div className="flex flex-col sm:flex-row gap-2">
+                {trip.is_shared && (
+                  <button
+                    type="button"
+                    disabled={shareBusy}
+                    onClick={handleUnshare}
+                    className="flex-1 px-4 py-3 rounded-xl cursor-pointer min-h-[44px] disabled:opacity-60"
+                    style={{
+                      background: theme.optionBg,
+                      border: `1px solid ${theme.border}`,
+                      color: theme.body,
+                      fontFamily: "system-ui, sans-serif",
+                      fontSize: "0.9rem",
+                    }}
+                  >
+                    Stop sharing
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={shareBusy}
+                  onClick={handleShare}
+                  className="flex-1 px-4 py-3 rounded-xl cursor-pointer min-h-[44px] disabled:opacity-60"
+                  style={{
+                    background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
+                    border: "none",
+                    color: "#fff",
+                    fontFamily: "system-ui, sans-serif",
+                    fontSize: "0.9rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  {shareBusy ? "Saving…" : trip.is_shared ? "Update" : "Share trip"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

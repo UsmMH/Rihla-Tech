@@ -1,6 +1,7 @@
+from app.models.community import TripComment, TripSave, TripVote
 from app.models.place import Place
 from app.models.question import AnswerOption, Question
 from app.models.trip_plan import QuizResponse, TripPlan
 from app.models.user import User
 
-__all__ = ["User", "Question", "AnswerOption", "TripPlan", "QuizResponse"]
+__all__ = ["User", "Question", "AnswerOption", "TripPlan", "QuizResponse", "TripVote", "TripSave", "TripComment"]

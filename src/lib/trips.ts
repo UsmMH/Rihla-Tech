@@ -48,6 +48,8 @@ export interface TripDetail {
   places_geocoded: number;
   source: string;
   fallback_reason: string | null;
+  is_shared?: boolean;
+  share_caption?: string | null;
 }
 
 export interface TripListItem {

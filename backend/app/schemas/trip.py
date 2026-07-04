@@ -113,6 +113,8 @@ class TripDetailResponse(BaseModel):
     places_geocoded: int
     source: str
     fallback_reason: str | None = None
+    is_shared: bool = False
+    share_caption: str | None = None
 
 
 class GenerateTripResponse(TripDetailResponse):

@@ -1,7 +1,7 @@
 # RihlaTech — Development Plan & Handoff
 
 > **Purpose:** Continue development in a new chat without losing context.  
-> **Last updated:** July 2026 · **Phases 0–6 committed & pushed** · **Next: Phase 7 (Community)**
+> **Last updated:** July 2026 · **Phases 0–7 committed & pushed** · **Next: Phase 8 (Admin + deploy)**
 
 ---
 
@@ -90,19 +90,20 @@ Rihla-Tech/
 ├── backend/app/
 │   ├── main.py
 │   ├── models/
-│   ├── routers/          auth, quiz, trips, places, chat, health
+│   ├── routers/          auth, quiz, trips, places, chat, community, health
 │   ├── services/
 │   │   ├── llm.py, itinerary.py, destinations.py, geocoding.py
 │   │   ├── flights.py, hotels.py          # Phase 6
+│   │   ├── community.py                   # Phase 7
 │   │   ├── edit.py, apply_edit.py, chat.py, consult_chat.py
-│   └── schemas/trip.py
+│   └── schemas/trip.py, community.py
 ├── src/
-│   ├── pages/              AppDashboard, TripResult, MyTrips, Login, ...
+│   ├── pages/              AppDashboard, TripResult, CommunityPage, CommunityTripPage, ...
 │   ├── components/
 │   │   ├── layout/       Navbar, AppBottomNav
 │   │   ├── auth/         AuthLayout (light mode)
 │   │   └── trip/         ChatbotSidebar, QuestionFlow, OriginCityInput
-│   └── lib/trips.ts, places.ts, mapDirections.ts
+│   └── lib/trips.ts, community.ts, places.ts, mapDirections.ts
 ├── plan.md
 └── README.md
 ```
@@ -118,9 +119,13 @@ Login (light mode) → Home dashboard
           └─ My Trips → reopen / delete itineraries
 
 Trip result → collapsible Flights / Hotels / Days
+            → Share to Community (optional caption)
             → Ask AI (trip chat) → propose edit → Apply / "yes"
             → Google Maps deep-links per activity + day route
             → Back to My Trips
+
+Community → Discover feed / Saved bookmarks
+          → open shared trip → vote, save, comment (read-only itinerary)
 
 App nav (mobile): Home · My Trips · Community | Profile icon (top-right)
 App nav (desktop): Home · My Trips · Community · Profile
@@ -182,6 +187,21 @@ App nav (desktop): Home · My Trips · Community · Profile
 | POST | `/api/chat/message` | Trip chat; auto-applies on "yes"; returns `proposes_edit` + `apply_instruction` |
 | POST | `/api/chat/consult` | Home consult chat — no trip required; client-side history in request body |
 
+### Community (Phase 7)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/community/feed` | Discover shared trips |
+| GET | `/api/community/saved` | Current user's saved trips |
+| GET | `/api/community/trips/{id}` | Shared trip detail (read-only itinerary) |
+| POST | `/api/community/trips/{id}/share` | Share own trip (`caption` optional) |
+| DELETE | `/api/community/trips/{id}/share` | Unshare own trip |
+| POST | `/api/community/trips/{id}/vote` | Toggle upvote |
+| POST | `/api/community/trips/{id}/save` | Toggle bookmark |
+| GET | `/api/community/trips/{id}/comments` | List comments |
+| POST | `/api/community/trips/{id}/comments` | Add comment |
+| DELETE | `/api/community/comments/{id}` | Delete own comment |
+
 ### Health
 
 | Method | Path | Description |
@@ -223,15 +243,20 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 - [x] Quiz footer: fixed button heights + spacer (no layout shift on step change)
 - [x] My Trips: hide “Itinerary ready” badge for completed trips
 
+### Phase 7 — Community ✅
+
+**Backend:**
+- [x] `trip_plans.is_shared`, `share_caption`, `shared_at` + `trip_votes`, `trip_saves`, `trip_comments` tables
+- [x] `GET /api/community/feed`, `/saved`, `/trips/{id}`, comments + share/vote/save toggles
+
+**Frontend:**
+- [x] **Community** page — Discover / Saved tabs with vote, save, comment counts
+- [x] **Community trip detail** — read-only itinerary + comments
+- [x] **Share** button on trip result (caption modal, unshare)
+
 ---
 
-## Current priority — Phase 7: Community
-
-- [ ] Share, save, vote, comment
-
----
-
-## Phase 8 — Admin + deployment
+## Current priority — Phase 8: Admin + deployment
 
 - [ ] Admin dashboard
 - [ ] Cloud deploy (Railway / Render / university server — TBD)
@@ -248,7 +273,7 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 5b. App-shell UX + mobile polish + consult chat ✅  
 6. Flights/hotels + deep-links ✅  
 6b. Trip result UX + auth light mode + nav polish ✅  
-7. Community  
+7. Community ✅  
 8. Admin  
 
 ---
@@ -271,7 +296,7 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 
 ## Handoff — start here in next chat
 
-1. **Phase 7 — Community** — share, save, vote, comment.
+1. **Phase 8 — Admin + deployment** — dashboard, cloud hosting.
 
 2. **Optional polish** — persist consult chat server-side; `/welcome` marketing route for logged-out users.
 
@@ -286,14 +311,15 @@ Read plan.md and README.md first; plan.md is the source of truth.
 Repo: UsmMH/Rihla-Tech
 Stack: React 18 + Vite + Tailwind + FastAPI + PostgreSQL (Docker 5433) + Gemini/Duffel/Mapbox
 
-Done through Phase 6 + UX polish:
+Done through Phase 7:
+- Community: share trips, Discover/Saved feed, vote, save, comment
 - Duffel flights + mock hotels on trip result (collapsible sections)
 - Collapsible day-by-day itinerary; back to My Trips
 - Light login/register; mobile nav polish; in-app delete confirm
 
-NEXT: Phase 7 Community
+NEXT: Phase 8 Admin + deployment
 
-Key files: plan.md, src/pages/TripResult.tsx, backend/app/services/flights.py, hotels.py
+Key files: plan.md, src/pages/CommunityPage.tsx, backend/app/routers/community.py
 ```
 
 ---
@@ -305,4 +331,6 @@ SELECT id, destination, status, itinerary_source FROM trip_plans ORDER BY id DES
 SELECT trip_plan_id, day_number, time_slot, name, map_search, latitude, longitude, location_confirmed
 FROM places ORDER BY trip_plan_id DESC, day_number, sort_order LIMIT 20;
 SELECT trip_plan_id, role, left(content, 60) FROM chat_messages ORDER BY id DESC LIMIT 10;
+SELECT id, destination, is_shared, shared_at FROM trip_plans WHERE is_shared = TRUE ORDER BY shared_at DESC LIMIT 5;
+SELECT trip_plan_id, count(*) FROM trip_votes GROUP BY trip_plan_id;
 ```

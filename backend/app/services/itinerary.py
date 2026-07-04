@@ -366,6 +366,8 @@ def _build_response(
         places_geocoded=len(map_pins),
         source=source,
         fallback_reason=fallback_reason,
+        is_shared=bool(getattr(trip, "is_shared", False)),
+        share_caption=getattr(trip, "share_caption", None),
     )
 
 
