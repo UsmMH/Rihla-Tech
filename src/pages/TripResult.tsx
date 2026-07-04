@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { ExternalLink, MapPin, Route } from "lucide-react";
-import Footer from "@/components/layout/Footer";
 import Navbar from "@/components/layout/Navbar";
 import ChatbotSidebar from "@/components/trip/ChatbotSidebar";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -13,12 +12,13 @@ import {
   googleMapsSearchUrl,
 } from "@/lib/mapDirections";
 import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
-import { editTrip, generateTrip, getTrip, saveLastTripId, type TripAlternative, type TripDetail } from "@/lib/trips";
+import { generateTrip, getTrip, saveLastTripId, type TripDetail } from "@/lib/trips";
+import type { AppTab } from "@/lib/navigation";
 
 type TripResultProps = {
   tripPlanId: number;
   onHome: () => void;
-  onMyTrips?: () => void;
+  onNavigate?: (tab: AppTab) => void;
 };
 
 function sourceLabel(source: string): string {
@@ -28,12 +28,8 @@ function sourceLabel(source: string): string {
   return "Demo";
 }
 
-export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResultProps) {
+export default function TripResult({ tripPlanId, onHome, onNavigate }: TripResultProps) {
   const { theme } = useTheme();
-  const [showAlternatives, setShowAlternatives] = useState(false);
-  const [alternatives, setAlternatives] = useState<TripAlternative[]>([]);
-  const [alternativesLoading, setAlternativesLoading] = useState(false);
-  const [alternativesError, setAlternativesError] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInitialInput, setChatInitialInput] = useState("");
   const [savedDays, setSavedDays] = useState<number[]>([]);
@@ -68,24 +64,6 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
     loadItinerary();
   }, [loadItinerary, tripPlanId]);
 
-  async function loadAlternatives() {
-    if (alternatives.length > 0) {
-      setShowAlternatives((s) => !s);
-      return;
-    }
-    setShowAlternatives(true);
-    setAlternativesLoading(true);
-    setAlternativesError(null);
-    try {
-      const result = await editTrip(tripPlanId);
-      setAlternatives(result.alternatives);
-    } catch (err: unknown) {
-      setAlternativesError(err instanceof ApiError ? err.message : "Failed to load alternatives");
-    } finally {
-      setAlternativesLoading(false);
-    }
-  }
-
   function toggleSave(day: number) {
     setSavedDays((prev) => prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]);
   }
@@ -93,7 +71,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
   if (loading) {
     return (
       <div style={{ background: theme.pageBg, minHeight: "100vh" }}>
-        <Navbar onHome={onHome} onMyTrips={onMyTrips} />
+        <Navbar variant="app" onHome={onHome} onNavigate={onNavigate} />
         <div className="flex flex-col items-center justify-center px-4" style={{ minHeight: "70vh", color: theme.muted }}>
           <div
             className="w-10 h-10 rounded-full border-2 border-t-transparent animate-spin mb-4"
@@ -113,7 +91,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
   if (error || !trip) {
     return (
       <div style={{ background: theme.pageBg, minHeight: "100vh" }}>
-        <Navbar onHome={onHome} onMyTrips={onMyTrips} />
+        <Navbar variant="app" onHome={onHome} onNavigate={onNavigate} />
         <div className="flex flex-col items-center justify-center gap-4 px-4" style={{ minHeight: "70vh" }}>
           <p style={{ color: theme.body, fontFamily: "system-ui, sans-serif", textAlign: "center" }}>
             {error ?? "Something went wrong"}
@@ -143,7 +121,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100vh", transition: "background 0.3s" }}>
-      <Navbar onHome={onHome} />
+      <Navbar variant="app" onHome={onHome} onNavigate={onNavigate} />
 
       <div
         className="relative"
@@ -181,7 +159,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
               </div>
             </div>
 
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex flex-col gap-2 w-full md:w-auto md:flex-row">
               <motion.button
                 type="button"
                 whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
@@ -189,7 +167,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
                   setChatInitialInput("");
                   setIsChatOpen(true);
                 }}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl cursor-pointer whitespace-nowrap flex-shrink-0"
+                className="hidden md:inline-flex items-center justify-center gap-2 w-full md:w-auto px-4 py-3 md:py-2.5 rounded-xl cursor-pointer whitespace-nowrap flex-shrink-0 min-h-[44px]"
                 style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, border: `1px solid ${theme.border}`, color: "#fff", fontFamily: "system-ui, sans-serif", fontSize: "0.88rem", fontWeight: 500, lineHeight: 1 }}
               >
                 <svg width="14" height="14" viewBox="0 0 15 15" fill="none" className="flex-shrink-0" aria-hidden>
@@ -231,7 +209,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 md:px-6 py-8">
+      <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-8 pb-32 md:pb-12">
         <div className="space-y-10">
           {trip.itinerary.map((dayPlan) => {
             const dayActivityNames = dayPlan.activities.map((a) => a.name);
@@ -265,13 +243,13 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
                   {dayGoogleRoute && (
                     <a
                       href={dayGoogleRoute}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl transition-opacity hover:opacity-90"
+                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl transition-opacity hover:opacity-90 min-h-[44px]"
                       style={{
                         background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
                         color: "#fff",
@@ -291,7 +269,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
                   <button
                     type="button"
                     onClick={() => toggleSave(dayPlan.day)}
-                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl cursor-pointer transition-all"
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl cursor-pointer transition-all min-h-[44px]"
                     style={{
                       background: savedDays.includes(dayPlan.day) ? theme.optionBgSelected : theme.optionBg,
                       border: `1px solid ${savedDays.includes(dayPlan.day) ? theme.accentSky : theme.border}`,
@@ -315,10 +293,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
                 </p>
               )}
 
-              <div
-                className="md:grid md:gap-4 md:grid-cols-3"
-                style={{ display: "flex", overflowX: "auto", gap: "14px", paddingBottom: "4px", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}
-              >
+              <div className="flex flex-col gap-4 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4">
                 {dayPlan.activities.map((activity, aIdx) => {
                   const typeStyle = getActivityTypeStyle(activity.type);
                   const TypeIcon = typeStyle.icon;
@@ -333,15 +308,12 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
                   <motion.div
                     key={`${dayPlan.day}-${activity.time_slot}-${activity.name}`}
                     initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: aIdx * 0.08 }}
-                    className="rounded-2xl overflow-hidden flex-shrink-0 flex flex-col"
+                    className="rounded-2xl overflow-hidden w-full flex flex-col"
                     style={{
                       background: theme.activityCardBg,
                       border: `1px solid ${theme.activityCardBorder}`,
                       borderTop: `3px solid ${dayColor}`,
-                      minWidth: "272px",
-                      width: "272px",
                       minHeight: "260px",
-                      scrollSnapAlign: "start",
                       boxShadow: theme.cardShadow,
                       transition: "border-color 0.2s, box-shadow 0.2s",
                     }}
@@ -393,7 +365,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
                             href={legGoogleUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center justify-center gap-1.5 w-full px-3 py-2 rounded-xl transition-opacity hover:opacity-90"
+                            className="inline-flex items-center justify-center gap-1.5 w-full px-3 py-2.5 rounded-xl transition-opacity hover:opacity-90 min-h-[44px]"
                             style={{
                               background: theme.isDark ? "rgba(88,171,212,0.1)" : "rgba(88,171,212,0.12)",
                               border: `1px solid ${theme.accentSky}44`,
@@ -412,7 +384,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
                           href={googleMapsUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center gap-1.5 w-full px-3 py-2.5 rounded-xl transition-opacity hover:opacity-90"
+                          className="inline-flex items-center justify-center gap-1.5 w-full px-3 py-2.5 rounded-xl transition-opacity hover:opacity-90 min-h-[44px]"
                           style={{
                             background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
                             color: "#fff",
@@ -437,148 +409,51 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
           })}
         </div>
 
-        <div className="mt-12 mb-4">
-          <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-            <h2 style={{ fontFamily: "'DM Serif Display', serif", color: theme.heading, fontSize: "1.4rem" }}>Explore Alternatives</h2>
-            <motion.button
-              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-              onClick={() => {
-                if (showAlternatives && alternatives.length > 0) {
-                  setShowAlternatives(false);
-                } else {
-                  void loadAlternatives();
-                }
-              }}
-              disabled={alternativesLoading}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl cursor-pointer transition-all"
-              style={{
-                background: showAlternatives ? theme.optionBgSelected : `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
-                border: `1px solid ${theme.border}`,
-                color: "#FFFFFF",
-                fontFamily: "system-ui, sans-serif",
-                fontSize: "0.88rem",
-                fontWeight: 500,
-                opacity: alternativesLoading ? 0.7 : 1,
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 15 15" fill="none">
-                <path d="M2 7.5h11M9 4l3.5 3.5L9 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              {alternativesLoading ? "Loading..." : showAlternatives ? "Hide" : "Suggest Alternatives"}
-            </motion.button>
-          </div>
-
-          <AnimatePresence>
-            {showAlternatives && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.3 }} className="overflow-hidden"
-              >
-                {alternativesError && (
-                  <p className="mb-4 text-sm" style={{ color: theme.body, fontFamily: "system-ui, sans-serif" }}>
-                    {alternativesError}
-                  </p>
-                )}
-                {alternativesLoading && (
-                  <div className="flex justify-center py-8">
-                    <div
-                      className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-                      style={{ borderColor: theme.accentSky, borderTopColor: "transparent" }}
-                    />
-                  </div>
-                )}
-                {!alternativesLoading && alternatives.length > 0 && (
-                  <div
-                    className="md:grid md:grid-cols-3 md:gap-5"
-                    style={{ display: "flex", overflowX: "auto", gap: "12px", paddingBottom: "8px", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}
-                  >
-                    {alternatives.map((alt, i) => (
-                      <motion.div
-                        key={alt.title}
-                        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}
-                        className="rounded-2xl overflow-hidden flex-shrink-0"
-                        style={{ background: theme.activityCardBg, border: `1px solid ${theme.activityCardBorder}`, minWidth: "260px", width: "260px", scrollSnapAlign: "start", boxShadow: theme.cardShadow, transition: "background 0.3s" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.borderColor = theme.activityCardHoverBorder)}
-                        onMouseLeave={(e) => (e.currentTarget.style.borderColor = theme.activityCardBorder)}
-                      >
-                        <div
-                          className="relative flex items-end px-4 pb-4"
-                          style={{
-                            height: "100px",
-                            background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
-                          }}
-                        >
-                          <div className="absolute top-3 right-3 px-2 py-1 rounded-full text-xs"
-                            style={{ background: "rgba(10,22,40,0.5)", border: "1px solid rgba(88,171,212,0.3)", color: "#58ABD4", fontFamily: "system-ui, sans-serif" }}>
-                            {alt.match_percent}% match
-                          </div>
-                          <h3 style={{ fontFamily: "'DM Serif Display', serif", color: "#fff", fontSize: "1.05rem" }}>{alt.title}</h3>
-                        </div>
-                        <div className="p-4">
-                          <p style={{ color: theme.muted, fontSize: "0.78rem", marginBottom: "0.75rem", fontFamily: "system-ui, sans-serif" }}>{alt.tagline}</p>
-                          <div className="flex flex-wrap gap-1 mb-3">
-                            {alt.highlights.map((h) => (
-                              <span key={h} className="px-2 py-0.5 rounded-full text-xs"
-                                style={{ background: theme.badgeBg, border: `1px solid ${theme.badgeBorder}`, color: theme.badgeText, fontFamily: "system-ui, sans-serif" }}>
-                                {h}
-                              </span>
-                            ))}
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span style={{ color: theme.faint, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif" }}>{alt.budget_note}</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setChatInitialInput(`Tell me more about visiting ${alt.title} instead of my current destination`);
-                                setIsChatOpen(true);
-                              }}
-                              className="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all"
-                              style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, color: "#fff", border: "none", fontFamily: "system-ui, sans-serif" }}
-                            >
-                              Ask AI
-                            </button>
-                          </div>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        <div className="mt-10 pt-8 flex flex-col sm:flex-row gap-3" style={{ borderTop: `1px solid ${theme.border}` }}>
-          <button onClick={onHome}
-            className="w-full sm:w-auto flex-1 px-6 py-3.5 rounded-xl cursor-pointer transition-all"
+        <div className="mt-10 pt-8" style={{ borderTop: `1px solid ${theme.border}` }}>
+          <button
+            type="button"
+            onClick={onHome}
+            className="w-full px-6 py-3.5 rounded-xl cursor-pointer transition-all min-h-[48px]"
             style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body, fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}
             onMouseEnter={(e) => (e.currentTarget.style.borderColor = theme.accentMid)}
             onMouseLeave={(e) => (e.currentTarget.style.borderColor = theme.border)}
           >
-            ← Start Over
+            ← Home
           </button>
-          <button
-            className="w-full sm:w-auto flex-1 px-6 py-3.5 rounded-xl cursor-pointer transition-all"
-            style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body, fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}
-          >
-            Share Trip
-          </button>
-          <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-            className="w-full sm:w-auto flex-1 px-6 py-3.5 rounded-xl font-semibold cursor-pointer"
-            style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, border: "none", color: "#fff", fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}
-          >
-            Download PDF Guide
-          </motion.button>
         </div>
       </div>
 
-      <Footer />
+      {!isChatOpen && (
+      <div
+        className="md:hidden fixed bottom-0 left-0 right-0 z-30 px-4 pt-3"
+        style={{
+          background: theme.navBg,
+          backdropFilter: "blur(14px)",
+          borderTop: `1px solid ${theme.navBorder}`,
+          paddingBottom: "max(0.75rem, env(safe-area-inset-bottom, 0.75rem))",
+        }}
+      >
+        <motion.button
+          type="button"
+          whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+          onClick={() => setIsChatOpen(true)}
+          className="w-full inline-flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl cursor-pointer min-h-[48px]"
+          style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, border: "none", color: "#fff", fontFamily: "system-ui, sans-serif", fontSize: "0.9rem", fontWeight: 600, lineHeight: 1 }}
+        >
+          <svg width="16" height="16" viewBox="0 0 15 15" fill="none" className="flex-shrink-0" aria-hidden>
+            <path d="M2 2h11v9H8l-3 3v-3H2V2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+          </svg>
+          <span>Ask AI</span>
+        </motion.button>
+      </div>
+      )}
 
+      {!isChatOpen && (
       <motion.button
         type="button"
         whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.97 }}
         onClick={() => setIsChatOpen(true)}
-        className="fixed bottom-6 right-5 z-30 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-full cursor-pointer shadow-xl whitespace-nowrap"
+        className="hidden md:inline-flex fixed bottom-6 right-5 z-30 items-center justify-center gap-2 px-4 py-3 rounded-full cursor-pointer shadow-xl whitespace-nowrap min-h-[44px]"
         style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, border: `1px solid ${theme.border}`, color: "#fff", fontFamily: "system-ui, sans-serif", fontSize: "0.88rem", fontWeight: 500, lineHeight: 1, boxShadow: "0 8px 30px rgba(30,75,136,0.35)" }}
       >
         <svg width="16" height="16" viewBox="0 0 15 15" fill="none" className="flex-shrink-0" aria-hidden>
@@ -586,6 +461,7 @@ export default function TripResult({ tripPlanId, onHome, onMyTrips }: TripResult
         </svg>
         <span>Ask AI</span>
       </motion.button>
+      )}
 
       <ChatbotSidebar
         isOpen={isChatOpen}

@@ -4,8 +4,15 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
-from app.schemas.trip import ChatHistoryResponse, ChatMessageRequest, ChatMessageResponse
+from app.schemas.trip import (
+    ChatHistoryResponse,
+    ChatMessageRequest,
+    ChatMessageResponse,
+    ConsultChatRequest,
+    ConsultChatResponse,
+)
 from app.services.chat import chat_with_trip, list_chat_messages
+from app.services.consult_chat import consult_chat
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -27,3 +34,11 @@ def send_chat_message(
     current_user: User = Depends(get_current_user),
 ) -> ChatMessageResponse:
     return chat_with_trip(db, current_user, payload.trip_plan_id, payload.message)
+
+
+@router.post("/consult", response_model=ConsultChatResponse)
+def send_consult_message(
+    payload: ConsultChatRequest,
+    current_user: User = Depends(get_current_user),
+) -> ConsultChatResponse:
+    return consult_chat(current_user, payload)

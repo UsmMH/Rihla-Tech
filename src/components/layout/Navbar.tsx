@@ -2,45 +2,65 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import LogoMark from "@/components/layout/LogoMark";
 import { useTheme } from "@/contexts/ThemeContext";
-import { useAuth } from "@/contexts/AuthContext";
-import { navigate } from "@/lib/navigation";
+import { navigate, type AppTab } from "@/lib/navigation";
 
 type NavbarProps = {
+  variant?: "marketing" | "app";
+  activePage?: AppTab;
+  onNavigate?: (tab: AppTab) => void;
   onHome?: () => void;
   onStart?: () => void;
-  onMyTrips?: () => void;
 };
 
-const NAV_ITEMS = [
+const MARKETING_ITEMS = [
   { label: "Features", sectionId: "features" },
   { label: "How it Works", sectionId: "how-it-works" },
   { label: "Destinations", sectionId: "destinations" },
 ] as const;
 
-export default function Navbar({ onHome, onStart, onMyTrips }: NavbarProps) {
-  const { theme, isDark, toggle } = useTheme();
-  const { user, isAuthenticated, logout } = useAuth();
+const APP_ITEMS: { label: string; tab: AppTab }[] = [
+  { label: "Home", tab: "home" },
+  { label: "My Trips", tab: "my-trips" },
+  { label: "Community", tab: "community" },
+  { label: "Profile", tab: "profile" },
+];
+
+export default function Navbar({
+  variant = "app",
+  activePage,
+  onNavigate,
+  onHome,
+  onStart,
+}: NavbarProps) {
+  const { theme, isDark } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  function handleHome() {
-    onHome?.();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  function handleLogoClick() {
+    if (variant === "app") {
+      onNavigate?.("home");
+      onHome?.();
+    } else {
+      onHome?.();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
     setMenuOpen(false);
   }
 
   function scrollToSection(sectionId: string) {
-    const needsNavigation = Boolean(onHome);
     onHome?.();
     setMenuOpen(false);
     window.setTimeout(() => {
       document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
-    }, needsNavigation ? 150 : 0);
+    }, 150);
   }
 
-  function handleLogout() {
-    logout();
+  function goToTab(tab: AppTab) {
+    onNavigate?.(tab);
     setMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
+  const isMarketing = variant === "marketing";
 
   return (
     <>
@@ -55,7 +75,7 @@ export default function Navbar({ onHome, onStart, onMyTrips }: NavbarProps) {
         }}
       >
         <button
-          onClick={handleHome}
+          onClick={handleLogoClick}
           className="flex items-center gap-2 group cursor-pointer flex-shrink-0"
           style={{ background: "none", border: "none", padding: 0 }}
         >
@@ -69,122 +89,79 @@ export default function Navbar({ onHome, onStart, onMyTrips }: NavbarProps) {
           </span>
         </button>
 
-        <div className="hidden md:flex items-center gap-7">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.sectionId}
-              onClick={() => scrollToSection(item.sectionId)}
-              className="text-sm transition-colors cursor-pointer"
-              style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = theme.navLinkHover)}
-              onMouseLeave={(e) => (e.currentTarget.style.color = theme.navLinkText)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="hidden md:flex items-center gap-2">
-          <button
-            onClick={toggle}
-            className="w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer transition-all"
-            style={{ background: theme.toggleBg, border: "none" }}
-            aria-label="Toggle theme"
-            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            {isDark ? (
-              <svg width="17" height="17" viewBox="0 0 20 20" fill="none">
-                <circle cx="10" cy="10" r="4" stroke={theme.toggleIcon} strokeWidth="1.6" />
-                <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M4.2 15.8l1.4-1.4M14.4 5.6l1.4-1.4"
-                  stroke={theme.toggleIcon} strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            ) : (
-              <svg width="17" height="17" viewBox="0 0 20 20" fill="none">
-                <path d="M17 10.5A7 7 0 119.5 3 5.5 5.5 0 0017 10.5z" fill={theme.toggleIcon} />
-              </svg>
-            )}
-          </button>
-          {isAuthenticated && user ? (
-            <>
-              {onMyTrips && (
-                <button
-                  onClick={onMyTrips}
-                  className="text-sm px-3 py-2 rounded-lg transition-colors cursor-pointer"
-                  style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = theme.navLinkHover)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = theme.navLinkText)}
-                >
-                  My Trips
-                </button>
-              )}
-              <span
-                className="text-sm px-2"
-                style={{ color: theme.navLinkText, fontFamily: "system-ui, sans-serif" }}
-              >
-                {user.first_name}
-              </span>
+        {isMarketing ? (
+          <div className="hidden md:flex items-center gap-7">
+            {MARKETING_ITEMS.map((item) => (
               <button
-                onClick={handleLogout}
-                className="text-sm px-5 py-2 rounded-lg font-medium cursor-pointer transition-all"
-                style={{
-                  background: theme.accentDeep,
-                  color: "#fff",
-                  border: `1px solid ${theme.border}`,
-                  fontFamily: "system-ui, sans-serif",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = theme.accentMid)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = theme.accentDeep)}
-              >
-                Log out
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => navigate("/login")}
-                className="text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                key={item.sectionId}
+                onClick={() => scrollToSection(item.sectionId)}
+                className="text-sm transition-colors cursor-pointer"
                 style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = theme.navLinkHover)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = theme.navLinkText)}
               >
-                Log in
+                {item.label}
               </button>
-              <button
-                onClick={() => navigate("/register")}
-                className="text-sm px-5 py-2 rounded-lg font-medium cursor-pointer transition-all"
-                style={{
-                  background: theme.accentDeep,
-                  color: "#fff",
-                  border: `1px solid ${theme.border}`,
-                  fontFamily: "system-ui, sans-serif",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = theme.accentMid)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = theme.accentDeep)}
-              >
-                Get Started
-              </button>
-            </>
-          )}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="hidden md:flex items-center gap-1">
+            {APP_ITEMS.map((item) => {
+              const isActive = activePage === item.tab;
+              return (
+                <button
+                  key={item.tab}
+                  onClick={() => goToTab(item.tab)}
+                  className="text-sm px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                  style={{
+                    color: isActive ? theme.accentSky : theme.navLinkText,
+                    background: isActive ? theme.badgeBg : "none",
+                    border: "none",
+                    fontFamily: "system-ui, sans-serif",
+                    fontWeight: isActive ? 600 : 400,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isActive) e.currentTarget.style.color = theme.navLinkHover;
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive) e.currentTarget.style.color = theme.navLinkText;
+                  }}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-        <div className="flex md:hidden items-center gap-2">
-          <button
-            onClick={toggle}
-            className="w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer"
-            style={{ background: theme.toggleBg, border: "none", flexShrink: 0 }}
-            aria-label="Toggle theme"
-          >
-            {isDark ? (
-              <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-                <circle cx="10" cy="10" r="4" stroke={theme.toggleIcon} strokeWidth="1.6" />
-                <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M4.2 15.8l1.4-1.4M14.4 5.6l1.4-1.4"
-                  stroke={theme.toggleIcon} strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-                <path d="M17 10.5A7 7 0 119.5 3 5.5 5.5 0 0017 10.5z" fill={theme.toggleIcon} />
-              </svg>
-            )}
-          </button>
-          {isAuthenticated && onStart && (
+        {isMarketing && (
+          <div className="hidden md:flex items-center gap-2">
+            <button
+              onClick={() => navigate("/login")}
+              className="text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer"
+              style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
+            >
+              Log in
+            </button>
+            <button
+              onClick={() => navigate("/register")}
+              className="text-sm px-5 py-2 rounded-lg font-medium cursor-pointer transition-all"
+              style={{
+                background: theme.accentDeep,
+                color: "#fff",
+                border: `1px solid ${theme.border}`,
+                fontFamily: "system-ui, sans-serif",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = theme.accentMid)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = theme.accentDeep)}
+            >
+              Get Started
+            </button>
+          </div>
+        )}
+
+        <div className={`flex items-center gap-2 ${isMarketing ? "md:hidden" : ""}`}>
+          {isMarketing && onStart && (
             <button
               onClick={onStart}
               className="text-sm px-4 py-2 rounded-lg font-medium cursor-pointer"
@@ -200,7 +177,7 @@ export default function Navbar({ onHome, onStart, onMyTrips }: NavbarProps) {
           )}
           <button
             onClick={() => setMenuOpen((o) => !o)}
-            className="w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer"
+            className="w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer md:hidden"
             style={{ background: theme.toggleBg, border: "none" }}
             aria-label="Toggle menu"
           >
@@ -229,79 +206,43 @@ export default function Navbar({ onHome, onStart, onMyTrips }: NavbarProps) {
               backdropFilter: "blur(14px)",
             }}
           >
-            {NAV_ITEMS.map((item) => (
-              <button
-                key={item.sectionId}
-                onClick={() => scrollToSection(item.sectionId)}
-                className="w-full text-left py-3 text-sm cursor-pointer"
-                style={{
-                  color: theme.navLinkText,
-                  background: "none",
-                  border: "none",
-                  borderBottom: `1px solid ${theme.navMenuItemBorder}`,
-                  fontFamily: "system-ui, sans-serif",
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-            {isAuthenticated && user ? (
-              <>
-                <div
-                  className="w-full py-3 text-sm"
+            {isMarketing ? (
+              MARKETING_ITEMS.map((item) => (
+                <button
+                  key={item.sectionId}
+                  onClick={() => scrollToSection(item.sectionId)}
+                  className="w-full text-left py-3 text-sm cursor-pointer"
                   style={{
                     color: theme.navLinkText,
+                    background: "none",
+                    border: "none",
                     borderBottom: `1px solid ${theme.navMenuItemBorder}`,
                     fontFamily: "system-ui, sans-serif",
                   }}
                 >
-                  Signed in as {user.first_name}
-                </div>
-                {onMyTrips && (
-                  <button
-                    onClick={() => {
-                      onMyTrips();
-                      setMenuOpen(false);
-                    }}
-                    className="w-full text-left py-3 text-sm cursor-pointer"
-                    style={{
-                      color: theme.navLinkText,
-                      background: "none",
-                      border: "none",
-                      borderBottom: `1px solid ${theme.navMenuItemBorder}`,
-                      fontFamily: "system-ui, sans-serif",
-                    }}
-                  >
-                    My Trips
-                  </button>
-                )}
-                {onStart && (
-                  <button
-                    onClick={() => {
-                      onStart();
-                      setMenuOpen(false);
-                    }}
-                    className="w-full text-left py-3 text-sm cursor-pointer"
-                    style={{
-                      color: theme.navLinkText,
-                      background: "none",
-                      border: "none",
-                      borderBottom: `1px solid ${theme.navMenuItemBorder}`,
-                      fontFamily: "system-ui, sans-serif",
-                    }}
-                  >
-                    Plan My Trip
-                  </button>
-                )}
-                <button
-                  onClick={handleLogout}
-                  className="w-full text-left py-3 text-sm cursor-pointer"
-                  style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
-                >
-                  Log out
+                  {item.label}
                 </button>
-              </>
+              ))
             ) : (
+              APP_ITEMS.map((item) => (
+                <button
+                  key={item.tab}
+                  onClick={() => goToTab(item.tab)}
+                  className="w-full text-left py-3 text-sm cursor-pointer"
+                  style={{
+                    color: activePage === item.tab ? theme.accentSky : theme.navLinkText,
+                    background: "none",
+                    border: "none",
+                    borderBottom: `1px solid ${theme.navMenuItemBorder}`,
+                    fontFamily: "system-ui, sans-serif",
+                    fontWeight: activePage === item.tab ? 600 : 400,
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))
+            )}
+            {isMarketing && (
               <>
                 <button
                   onClick={() => {

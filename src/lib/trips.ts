@@ -187,6 +187,10 @@ export function loadLastPage(): string | null {
   return localStorage.getItem(LAST_PAGE_KEY);
 }
 
+export function clearLastPage(): void {
+  localStorage.removeItem(LAST_PAGE_KEY);
+}
+
 export function clearLastTripId(): void {
   localStorage.removeItem(LAST_TRIP_KEY);
   localStorage.removeItem(LAST_PAGE_KEY);
@@ -239,6 +243,16 @@ export async function applyTripEdit(
     }),
   });
   return normalizeTripDetail(result);
+}
+
+export async function sendConsultMessage(
+  message: string,
+  history: { role: "user" | "assistant"; content: string }[] = [],
+): Promise<{ message: string; source: string; fallback_reason: string | null }> {
+  return apiFetch("/chat/consult", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
 }
 
 export async function deleteTrip(tripPlanId: number): Promise<void> {

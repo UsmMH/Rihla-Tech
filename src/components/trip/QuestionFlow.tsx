@@ -6,6 +6,7 @@ import OriginCityInput from "@/components/trip/OriginCityInput";
 import TripDateRangePicker from "@/components/trip/TripDateRangePicker";
 import TripTravelersInput from "@/components/trip/TripTravelersInput";
 import { useTheme } from "@/contexts/ThemeContext";
+import type { AppTab } from "@/lib/navigation";
 import type { AnswerValue, QuizQuestion } from "@/lib/quiz";
 
 type QuestionFlowProps = {
@@ -13,6 +14,7 @@ type QuestionFlowProps = {
   stepLabel: string;
   finalButtonLabel: string;
   onBack: () => void;
+  onNavigate?: (tab: AppTab) => void;
   onComplete: (answers: { question_id: number; value: AnswerValue }[]) => void;
   submitting?: boolean;
 };
@@ -44,6 +46,7 @@ export default function QuestionFlow({
   stepLabel,
   finalButtonLabel,
   onBack,
+  onNavigate,
   onComplete,
   submitting = false,
 }: QuestionFlowProps) {
@@ -130,10 +133,10 @@ export default function QuestionFlow({
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100svh", transition: "background 0.3s" }}>
-      <Navbar onHome={onBack} />
+      <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
 
-      <div className="flex flex-col items-center justify-start px-4" style={{ paddingTop: "72px", minHeight: "100svh", paddingBottom: "2rem" }}>
-        <div className="w-full max-w-xl pt-6">
+      <div className="flex flex-col items-center justify-start px-4" style={{ paddingTop: "72px", minHeight: "100svh", paddingBottom: "calc(6.5rem + env(safe-area-inset-bottom, 0px))" }}>
+        <div className="w-full max-w-xl pt-4 md:pt-6">
           <div className="flex items-center justify-between mb-2">
             <span style={{ color: theme.muted, fontSize: "0.78rem", fontFamily: "system-ui, sans-serif" }}>
               {stepLabel} · Step {currentStep + 1} of {visibleQuestions.length}
@@ -177,7 +180,7 @@ export default function QuestionFlow({
               </p>
 
               {step.question_type === "choice" && (
-                <div className={`grid gap-2.5 ${step.options.length > 5 ? "grid-cols-2" : "grid-cols-1 sm:grid-cols-2"}`}>
+                <div className={`grid gap-2.5 grid-cols-1 ${step.options.length > 4 ? "sm:grid-cols-2" : "sm:grid-cols-2"}`}>
                   {step.options.map((opt) => {
                     const isSelected = choiceSelected.includes(opt.option_key);
                     return (
@@ -193,6 +196,7 @@ export default function QuestionFlow({
                           border: `1.5px solid ${isSelected ? theme.optionBorderSelected : theme.optionBorder}`,
                           fontFamily: "system-ui, sans-serif",
                           minHeight: "52px",
+                          minWidth: "44px",
                         }}
                       >
                         {opt.icon && <span style={{ fontSize: "1.3rem", flexShrink: 0, lineHeight: 1 }}>{opt.icon}</span>}
@@ -240,7 +244,7 @@ export default function QuestionFlow({
                   value={(selected as string) ?? ""}
                   onChange={(e) => setAnswer(e.target.value)}
                   placeholder="Type your answer..."
-                  className="w-full rounded-xl px-4 py-3 outline-none"
+                  className="w-full rounded-xl px-4 py-3.5 outline-none min-h-[48px] text-base"
                   style={{
                     background: theme.optionBg,
                     border: `1.5px solid ${theme.optionBorder}`,
@@ -266,12 +270,19 @@ export default function QuestionFlow({
             </motion.div>
           </AnimatePresence>
 
-          <div className="flex items-center justify-between mt-6 gap-3">
+          <div
+            className="fixed bottom-0 left-0 right-0 z-40 px-4 pt-3 md:relative md:mt-6 md:px-0 md:pt-0"
+            style={{
+              paddingBottom: "max(1rem, env(safe-area-inset-bottom, 1rem))",
+              background: `linear-gradient(to top, ${theme.pageBg}ee 75%, transparent)`,
+            }}
+          >
+            <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
             <button
               type="button"
               onClick={handleBack}
               disabled={submitting}
-              className="flex items-center gap-2 px-4 py-3 rounded-xl transition-all cursor-pointer flex-shrink-0"
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all cursor-pointer flex-shrink-0 min-h-[48px] min-w-[48px]"
               style={{
                 background: theme.optionBg,
                 border: `1px solid ${theme.border}`,
@@ -293,7 +304,7 @@ export default function QuestionFlow({
               whileTap={canProceed && !submitting ? { scale: 0.98 } : {}}
               onClick={handleNext}
               disabled={!canProceed || submitting}
-              className="flex items-center justify-center gap-2 flex-1 py-3 rounded-xl font-medium transition-all"
+              className="flex items-center justify-center gap-2 flex-1 py-3.5 rounded-xl font-medium transition-all min-h-[48px]"
               style={{
                 background: canProceed && !submitting ? `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})` : theme.progressTrack,
                 border: `1px solid ${canProceed && !submitting ? theme.border : theme.borderFaint}`,
@@ -310,9 +321,10 @@ export default function QuestionFlow({
                 </svg>
               )}
             </motion.button>
+            </div>
           </div>
 
-          <div className="flex items-center justify-center gap-2 mt-5">
+          <div className="flex items-center justify-center gap-2 mt-5 md:mt-5">
             {visibleQuestions.map((q, i) => (
               <div
                 key={q.id}

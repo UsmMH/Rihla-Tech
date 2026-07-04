@@ -47,7 +47,7 @@ export default function LandingPage({ onStart, onMyTrips }: LandingPageProps) {
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100vh", overflowX: "hidden", transition: "background 0.3s" }}>
-      <Navbar onStart={onStart} onMyTrips={onMyTrips} />
+      <Navbar variant="marketing" onStart={onStart} onHome={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
 
       {/* HERO */}
       <section

@@ -6,6 +6,7 @@ import {
   applyTripEdit,
   getChatMessages,
   sendChatMessage,
+  sendConsultMessage,
   type StoredChatMessage,
   type TripDetail,
 } from "@/lib/trips";
@@ -26,11 +27,23 @@ function formatTime(iso?: string): string {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function greeting(destination: string): UiMessage {
+function tripGreeting(destination: string): UiMessage {
   return {
     id: 0,
     role: "assistant",
     content: `Hi! I'm your RihlaTech AI travel companion for ${destination}. Ask me about your itinerary, local tips, or tell me what you'd like to change.`,
+    time: formatTime(),
+    proposes_edit: false,
+    apply_instruction: null,
+  };
+}
+
+function consultGreeting(): UiMessage {
+  return {
+    id: 0,
+    role: "assistant",
+    content:
+      "Hi! I'm your RihlaTech travel assistant. Ask about destinations, when to visit, budgets, or packing — or tap Plan a new trip when you're ready for a full itinerary.",
     time: formatTime(),
     proposes_edit: false,
     apply_instruction: null,
@@ -48,25 +61,42 @@ function toUiMessage(row: StoredChatMessage): UiMessage {
   };
 }
 
-type ChatbotSidebarProps = {
+type TripChatbotProps = {
+  mode?: "trip";
   isOpen: boolean;
   onClose: () => void;
   tripPlanId: number;
   destination: string;
   initialInput?: string;
   onItineraryUpdated?: (trip: TripDetail) => void;
+  onPlanTrip?: never;
 };
 
-export default function ChatbotSidebar({
-  isOpen,
-  onClose,
-  tripPlanId,
-  destination,
-  initialInput = "",
-  onItineraryUpdated,
-}: ChatbotSidebarProps) {
+type ConsultChatbotProps = {
+  mode: "consult";
+  isOpen: boolean;
+  onClose: () => void;
+  tripPlanId?: never;
+  destination?: never;
+  initialInput?: string;
+  onItineraryUpdated?: never;
+  onPlanTrip?: () => void;
+};
+
+type ChatbotSidebarProps = TripChatbotProps | ConsultChatbotProps;
+
+export default function ChatbotSidebar(props: ChatbotSidebarProps) {
+  const { isOpen, onClose, initialInput = "", mode = "trip" } = props;
+  const isConsult = mode === "consult";
+  const tripPlanId = !isConsult ? props.tripPlanId : undefined;
+  const destination = !isConsult ? props.destination : "Travel";
+  const onItineraryUpdated = !isConsult ? props.onItineraryUpdated : undefined;
+  const onPlanTrip = isConsult ? props.onPlanTrip : undefined;
+
   const { theme } = useTheme();
-  const [messages, setMessages] = useState<UiMessage[]>([greeting(destination)]);
+  const [messages, setMessages] = useState<UiMessage[]>([
+    isConsult ? consultGreeting() : tripGreeting(destination),
+  ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -74,20 +104,24 @@ export default function ChatbotSidebar({
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const loadHistory = useCallback(async () => {
+    if (isConsult || tripPlanId === undefined) {
+      setMessages([consultGreeting()]);
+      return;
+    }
     setLoadingHistory(true);
     try {
       const rows = await getChatMessages(tripPlanId);
       if (rows.length === 0) {
-        setMessages([greeting(destination)]);
+        setMessages([tripGreeting(destination)]);
       } else {
         setMessages(rows.map(toUiMessage));
       }
     } catch {
-      setMessages([greeting(destination)]);
+      setMessages([tripGreeting(destination)]);
     } finally {
       setLoadingHistory(false);
     }
-  }, [tripPlanId, destination]);
+  }, [isConsult, tripPlanId, destination]);
 
   useEffect(() => {
     if (isOpen) {
@@ -113,7 +147,7 @@ export default function ChatbotSidebar({
   }
 
   async function handleApply(instruction: string, messageId: number) {
-    if (applyingId !== null) return;
+    if (applyingId !== null || tripPlanId === undefined) return;
     setApplyingId(messageId);
     try {
       const trip = await applyTripEdit(tripPlanId, instruction, messageId);
@@ -132,11 +166,38 @@ export default function ChatbotSidebar({
     const content = (text ?? input).trim();
     if (!content || sending) return;
 
+    const userMsg: UiMessage = {
+      id: -Date.now(),
+      role: "user",
+      content,
+      time: formatTime(),
+      proposes_edit: false,
+      apply_instruction: null,
+    };
     setInput("");
     setSending(true);
 
+    if (isConsult) {
+      const historyForApi = messages
+        .filter((m) => m.id !== 0)
+        .map((m) => ({ role: m.role, content: m.content }));
+      historyForApi.push({ role: "user" as const, content });
+      setMessages((m) => [...m, userMsg]);
+      try {
+        const reply = await sendConsultMessage(content, historyForApi);
+        appendAssistantMessage(reply.message);
+      } catch (err: unknown) {
+        appendAssistantMessage(
+          err instanceof ApiError ? err.message : "Sorry, I couldn't respond right now. Please try again.",
+        );
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
     try {
-      const reply = await sendChatMessage(content, tripPlanId);
+      const reply = await sendChatMessage(content, tripPlanId!);
       if (reply.itinerary_updated && reply.trip) {
         onItineraryUpdated?.(reply.trip);
       }
@@ -150,12 +211,36 @@ export default function ChatbotSidebar({
     }
   }
 
-  const quickSuggestions = [
-    "I'd like to change part of my itinerary",
-    "Best time for Day 1 activities",
-    "Budget breakdown",
-    "Restaurant recommendations",
-  ];
+  const quickSuggestions = isConsult
+    ? [
+        "Best destinations for a week in Europe",
+        "How do I plan a trip on a budget?",
+        "When is the best time to visit Japan?",
+        "Plan a new trip for me",
+      ]
+    : [
+        "I'd like to change part of my itinerary",
+        "Best time for Day 1 activities",
+        "Budget breakdown",
+        "Restaurant recommendations",
+      ];
+
+  function handleSuggestion(s: string) {
+    if (isConsult && s.toLowerCase().includes("plan a new trip") && onPlanTrip) {
+      onClose();
+      onPlanTrip();
+      return;
+    }
+    void handleSend(s);
+  }
+
+  const subtitle = sending
+    ? "Thinking..."
+    : applyingId
+      ? "Updating itinerary..."
+      : isConsult
+        ? "Travel assistant"
+        : `${destination} Expert`;
 
   return (
     <AnimatePresence>
@@ -171,9 +256,8 @@ export default function ChatbotSidebar({
           <motion.div
             initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed right-0 top-0 bottom-0 z-50 flex flex-col"
+            className="fixed inset-0 z-50 flex flex-col md:inset-y-0 md:left-auto md:right-0 md:w-[min(440px,100vw)]"
             style={{
-              width: "min(440px, 100vw)",
               background: theme.chatPanelBg,
               borderLeft: `1px solid ${theme.chatPanelBorder}`,
               boxShadow: theme.isDark ? "-20px 0 60px rgba(5,13,26,0.6)" : "-20px 0 60px rgba(10,22,40,0.12)",
@@ -196,14 +280,14 @@ export default function ChatbotSidebar({
                   <div className="flex items-center gap-1.5">
                     <div className="w-1.5 h-1.5 rounded-full" style={{ background: sending || applyingId ? "#FFC107" : "#4CAF50" }} />
                     <p style={{ color: theme.muted, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif" }}>
-                      {sending ? "Thinking..." : applyingId ? "Updating itinerary..." : `${destination} Expert`}
+                      {subtitle}
                     </p>
                   </div>
                 </div>
               </div>
               <button
                 onClick={onClose}
-                className="w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors flex-shrink-0"
+                className="w-11 h-11 rounded-full flex items-center justify-center cursor-pointer transition-colors flex-shrink-0"
                 style={{ background: theme.toggleBg, border: "none" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = theme.cardBorder)}
                 onMouseLeave={(e) => (e.currentTarget.style.background = theme.toggleBg)}
@@ -224,8 +308,8 @@ export default function ChatbotSidebar({
                 </div>
               )}
               {!loadingHistory && messages.map((msg) => {
-                const showApply = msg.role === "assistant" && msg.proposes_edit && msg.apply_instruction;
-                const showApplied = msg.role === "assistant" && !msg.proposes_edit && msg.apply_instruction;
+                const showApply = !isConsult && msg.role === "assistant" && msg.proposes_edit && msg.apply_instruction;
+                const showApplied = !isConsult && msg.role === "assistant" && !msg.proposes_edit && msg.apply_instruction;
 
                 return (
                 <motion.div key={`${msg.id}-${msg.time}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -244,7 +328,7 @@ export default function ChatbotSidebar({
                         type="button"
                         disabled={applyingId !== null}
                         onClick={() => void handleApply(msg.apply_instruction!, msg.id)}
-                        className="mt-2 px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all"
+                        className="mt-2 w-full sm:w-auto px-4 py-2.5 rounded-lg text-sm cursor-pointer transition-all min-h-[44px]"
                         style={{
                           background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
                           color: "#fff",
@@ -287,10 +371,10 @@ export default function ChatbotSidebar({
               <p style={{ color: theme.faint, fontSize: "0.68rem", marginBottom: "0.4rem", fontFamily: "system-ui, sans-serif" }}>
                 Quick suggestions
               </p>
-              <div className="flex gap-2" style={{ overflowX: "auto", scrollbarWidth: "none", paddingBottom: "2px" }}>
+              <div className="flex flex-wrap gap-2">
                 {quickSuggestions.map((s) => (
-                  <button key={s} onClick={() => handleSend(s)} disabled={sending}
-                    className="px-3 py-1.5 rounded-full text-xs cursor-pointer transition-all flex-shrink-0"
+                  <button key={s} onClick={() => handleSuggestion(s)} disabled={sending}
+                    className="px-3 py-2 rounded-full text-xs cursor-pointer transition-all min-h-[36px]"
                     style={{ background: theme.chatSuggestionBg, border: `1px solid ${theme.chatSuggestionBorder}`, color: theme.chatSuggestionText, fontFamily: "system-ui, sans-serif", opacity: sending ? 0.6 : 1 }}
                     onMouseEnter={(e) => (e.currentTarget.style.borderColor = theme.accentMid)}
                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = theme.chatSuggestionBorder)}
@@ -301,19 +385,19 @@ export default function ChatbotSidebar({
               </div>
             </div>
 
-            <div className="px-4 pt-2" style={{ paddingBottom: "max(1.25rem, env(safe-area-inset-bottom, 1.25rem))", flexShrink: 0 }}>
-              <div className="flex items-center gap-2 rounded-xl px-3 py-2"
+            <div className="px-4 pt-2" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom, 1rem))", flexShrink: 0 }}>
+              <div className="flex items-center gap-2 rounded-xl px-3 py-2 min-h-[48px]"
                 style={{ background: theme.chatInputBg, border: `1px solid ${theme.inputBorder}` }}>
                 <input
                   type="text" value={input} onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                  placeholder="Ask me anything about your trip..."
+                  placeholder={isConsult ? "Ask about travel destinations, tips..." : "Ask me anything about your trip..."}
                   disabled={sending}
-                  className="flex-1 bg-transparent outline-none py-1.5"
-                  style={{ color: theme.inputText, fontSize: "0.9rem", fontFamily: "system-ui, sans-serif", minWidth: 0 }}
+                  className="flex-1 bg-transparent outline-none py-2 text-base md:text-sm"
+                  style={{ color: theme.inputText, fontFamily: "system-ui, sans-serif", minWidth: 0 }}
                 />
                 <button onClick={() => handleSend()} disabled={sending || !input.trim()}
-                  className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer flex-shrink-0 transition-all"
+                  className="w-11 h-11 rounded-lg flex items-center justify-center cursor-pointer flex-shrink-0 transition-all"
                   style={{ background: input.trim() && !sending ? `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})` : theme.progressTrack, border: "none" }}
                   aria-label="Send message"
                 >
@@ -323,7 +407,9 @@ export default function ChatbotSidebar({
                 </button>
               </div>
               <p style={{ color: theme.faint, fontSize: "0.65rem", textAlign: "center", marginTop: "0.4rem", fontFamily: "system-ui, sans-serif" }}>
-                Say &quot;yes&quot; or tap Apply to confirm itinerary changes.
+                {isConsult
+                  ? "Ready to build an itinerary? Use Plan a new trip on Home."
+                  : 'Say "yes" or tap Apply to confirm itinerary changes.'}
               </p>
             </div>
           </motion.div>

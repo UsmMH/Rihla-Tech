@@ -1,32 +1,53 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import AppDashboardPage from "@/pages/AppDashboardPage";
+import CommunityPage from "@/pages/CommunityPage";
 import DestinationPickerPage from "@/pages/DestinationPickerPage";
 import LandingPage from "@/pages/LandingPage";
 import MyTripsPage from "@/pages/MyTripsPage";
 import PreferencesPage from "@/pages/PreferencesPage";
+import ProfilePage from "@/pages/ProfilePage";
 import QuizPage from "@/pages/QuizPage";
 import TripResult from "@/pages/TripResult";
-import { clearLastTripId, loadLastPage, loadLastTripId, saveLastPage, saveLastTripId } from "@/lib/trips";
+import type { AppTab } from "@/lib/navigation";
+import { clearLastPage, clearLastTripId, saveLastTripId } from "@/lib/trips";
 
-type TripPage = "landing" | "quiz" | "preferences" | "destinations" | "result" | "my-trips";
+type TripPage =
+  | "home"
+  | "profile"
+  | "community"
+  | "welcome"
+  | "quiz"
+  | "preferences"
+  | "destinations"
+  | "result"
+  | "my-trips";
+
+function tabToPage(tab: AppTab): TripPage {
+  if (tab === "home") return "home";
+  if (tab === "my-trips") return "my-trips";
+  if (tab === "community") return "community";
+  return "profile";
+}
 
 function TripPlanner() {
-  const [page, setPage] = useState<TripPage>("landing");
+  const [page, setPage] = useState<TripPage>("home");
   const [tripPlanId, setTripPlanId] = useState<number | null>(null);
-  useEffect(() => {
-    const savedId = loadLastTripId();
-    const savedPage = loadLastPage();
-    if (savedId !== null) {
-      setTripPlanId(savedId);
-      if (savedPage === "result") {
-        setPage("result");
-      }
-    }
-  }, []);
+
+  function goToAppHome() {
+    clearLastPage();
+    setPage("home");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleNavigate(tab: AppTab) {
+    setPage(tabToPage(tab));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   function resetFlow() {
-    setPage("landing");
+    goToAppHome();
     setTripPlanId(null);
     clearLastTripId();
   }
@@ -34,15 +55,38 @@ function TripPlanner() {
   function goToResult(id: number) {
     setTripPlanId(id);
     saveLastTripId(id);
-    saveLastPage("result");
+    setPage("result");
+  }
+
+  function startNewTrip() {
+    setTripPlanId(null);
+    clearLastTripId();
+    setPage("quiz");
+  }
+
+  function openTrip(id: number) {
+    setTripPlanId(id);
+    saveLastTripId(id);
     setPage("result");
   }
 
   return (
     <div style={{ fontFamily: "system-ui, -apple-system, sans-serif" }} className="min-h-screen">
-      {page === "landing" && (
+      {page === "home" && (
+        <AppDashboardPage
+          onNavigate={handleNavigate}
+          onPlanTrip={startNewTrip}
+          onOpenTrip={openTrip}
+        />
+      )}
+
+      {page === "profile" && <ProfilePage onNavigate={handleNavigate} />}
+
+      {page === "community" && <CommunityPage onNavigate={handleNavigate} />}
+
+      {page === "welcome" && (
         <LandingPage
-          onStart={() => setPage("quiz")}
+          onStart={startNewTrip}
           onMyTrips={() => setPage("my-trips")}
         />
       )}
@@ -50,8 +94,9 @@ function TripPlanner() {
       {page === "my-trips" && (
         <MyTripsPage
           onSelectTrip={goToResult}
-          onNewTrip={() => setPage("quiz")}
-          onHome={resetFlow}
+          onNewTrip={startNewTrip}
+          onHome={goToAppHome}
+          onNavigate={handleNavigate}
           onTripDeleted={(id) => {
             if (tripPlanId === id) {
               setTripPlanId(null);
@@ -68,7 +113,8 @@ function TripPlanner() {
             saveLastTripId(id);
             setPage("preferences");
           }}
-          onBack={resetFlow}
+          onBack={goToAppHome}
+          onNavigate={handleNavigate}
         />
       )}
 
@@ -85,6 +131,7 @@ function TripPlanner() {
             }
           }}
           onBack={() => setPage("quiz")}
+          onNavigate={handleNavigate}
         />
       )}
 
@@ -93,14 +140,15 @@ function TripPlanner() {
           tripPlanId={tripPlanId}
           onComplete={() => goToResult(tripPlanId)}
           onBack={() => setPage("preferences")}
+          onNavigate={handleNavigate}
         />
       )}
 
       {page === "result" && tripPlanId !== null && (
         <TripResult
           tripPlanId={tripPlanId}
-          onHome={resetFlow}
-          onMyTrips={() => setPage("my-trips")}
+          onHome={goToAppHome}
+          onNavigate={handleNavigate}
         />
       )}
     </div>

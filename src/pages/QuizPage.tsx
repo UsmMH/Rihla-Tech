@@ -3,15 +3,17 @@ import { useEffect, useState } from "react";
 import QuestionFlow from "@/components/trip/QuestionFlow";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
+import type { AppTab } from "@/lib/navigation";
 import type { AnswerValue, QuizQuestion } from "@/lib/quiz";
 import { fetchQuestions, submitQuizAnswers } from "@/lib/quiz";
 
 type QuizPageProps = {
   onComplete: (tripPlanId: number) => void;
   onBack: () => void;
+  onNavigate?: (tab: AppTab) => void;
 };
 
-export default function QuizPage({ onComplete, onBack }: QuizPageProps) {
+export default function QuizPage({ onComplete, onBack, onNavigate }: QuizPageProps) {
   const { theme } = useTheme();
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,7 @@ export default function QuizPage({ onComplete, onBack }: QuizPageProps) {
         stepLabel="Trip logistics"
         finalButtonLabel="Continue to Preferences"
         onBack={onBack}
+        onNavigate={onNavigate}
         onComplete={handleComplete}
         submitting={submitting}
       />

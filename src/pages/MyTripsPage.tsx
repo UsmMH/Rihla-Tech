@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Calendar, MapPin, ChevronRight, Trash2 } from "lucide-react";
+import AppBottomNav from "@/components/layout/AppBottomNav";
 import Footer from "@/components/layout/Footer";
 import Navbar from "@/components/layout/Navbar";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
+import type { AppTab } from "@/lib/navigation";
 import { deleteTrip, listTrips, type TripListItem } from "@/lib/trips";
 
 type MyTripsPageProps = {
   onSelectTrip: (tripPlanId: number) => void;
   onNewTrip: () => void;
   onHome: () => void;
+  onNavigate: (tab: AppTab) => void;
   onTripDeleted?: (tripPlanId: number) => void;
 };
 
@@ -29,7 +32,7 @@ function statusLabel(trip: TripListItem): string {
   return "In progress";
 }
 
-export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onTripDeleted }: MyTripsPageProps) {
+export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onNavigate, onTripDeleted }: MyTripsPageProps) {
   const { theme } = useTheme();
   const [trips, setTrips] = useState<TripListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,10 +67,10 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onTripDel
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100vh", transition: "background 0.3s" }}>
-      <Navbar onHome={onHome} onStart={onNewTrip} />
+      <Navbar variant="app" activePage="my-trips" onHome={onHome} onNavigate={onNavigate} />
 
-      <div className="max-w-3xl mx-auto px-4 md:px-6 py-8" style={{ paddingTop: "80px" }}>
-        <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
+      <div className="max-w-3xl mx-auto px-4 md:px-6 py-8 pb-28 md:pb-12" style={{ paddingTop: "80px" }}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
             <h1
               style={{
@@ -87,7 +90,7 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onTripDel
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             onClick={onNewTrip}
-            className="px-5 py-2.5 rounded-xl cursor-pointer"
+            className="w-full sm:w-auto px-5 py-3 rounded-xl cursor-pointer min-h-[44px]"
             style={{
               background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
               color: "#fff",
@@ -157,7 +160,7 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onTripDel
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
-                className="rounded-2xl px-5 py-4 flex items-center gap-4"
+                className="rounded-2xl px-4 py-4 sm:px-5 flex items-center gap-3 sm:gap-4"
                 style={{
                   background: theme.activityCardBg,
                   border: `1px solid ${theme.activityCardBorder}`,
@@ -215,7 +218,7 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onTripDel
                   aria-label={`Delete ${trip.destination ?? "trip"}`}
                   disabled={deletingId === trip.id}
                   onClick={(e) => void handleDelete(e, trip.id, trip.destination ?? "this trip")}
-                  className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer flex-shrink-0 transition-colors"
+                  className="w-11 h-11 rounded-xl flex items-center justify-center cursor-pointer flex-shrink-0 transition-colors min-w-[44px]"
                   style={{
                     background: theme.optionBg,
                     border: `1px solid ${theme.border}`,
@@ -235,6 +238,8 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onTripDel
           </div>
         )}
       </div>
+
+      <AppBottomNav active="my-trips" onNavigate={onNavigate} />
 
       <Footer />
     </div>

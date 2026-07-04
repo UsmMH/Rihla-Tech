@@ -193,3 +193,19 @@ class ChatMessageResponse(BaseModel):
     assistant_message_id: int | None = None
     itinerary_updated: bool = False
     trip: TripDetailResponse | None = None
+
+
+class ConsultHistoryItem(BaseModel):
+    role: str
+    content: str
+
+
+class ConsultChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[ConsultHistoryItem] = Field(default_factory=list)
+
+
+class ConsultChatResponse(BaseModel):
+    message: str
+    source: str
+    fallback_reason: str | None = None

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import QuestionFlow from "@/components/trip/QuestionFlow";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
+import type { AppTab } from "@/lib/navigation";
 import type { AnswerValue, QuizQuestion } from "@/lib/quiz";
 import { fetchQuestions, submitQuizAnswers } from "@/lib/quiz";
 
@@ -10,9 +11,10 @@ type PreferencesPageProps = {
   tripPlanId: number;
   onComplete: (tripPlanId: number, needsDestinationSuggestion: boolean) => void;
   onBack: () => void;
+  onNavigate?: (tab: AppTab) => void;
 };
 
-export default function PreferencesPage({ tripPlanId, onComplete, onBack }: PreferencesPageProps) {
+export default function PreferencesPage({ tripPlanId, onComplete, onBack, onNavigate }: PreferencesPageProps) {
   const { theme } = useTheme();
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,6 +73,7 @@ export default function PreferencesPage({ tripPlanId, onComplete, onBack }: Pref
         stepLabel="Your preferences"
         finalButtonLabel="Find My Destination"
         onBack={onBack}
+        onNavigate={onNavigate}
         onComplete={handleComplete}
         submitting={submitting}
       />

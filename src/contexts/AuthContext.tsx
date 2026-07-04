@@ -21,6 +21,7 @@ import {
   type RegisterInput,
   type User,
 } from "@/lib/auth";
+import { clearLastPage } from "@/lib/trips";
 
 type AuthContextValue = {
   user: User | null;
@@ -59,12 +60,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (input: LoginInput) => {
     const result = await loginRequest(input);
     storeAuth(result.access_token, result.user);
+    clearLastPage();
     setUser(result.user);
   }, []);
 
   const register = useCallback(async (input: RegisterInput) => {
     const result = await registerRequest(input);
     storeAuth(result.access_token, result.user);
+    clearLastPage();
     setUser(result.user);
   }, []);
 

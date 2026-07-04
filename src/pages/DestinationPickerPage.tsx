@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import Navbar from "@/components/layout/Navbar";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
+import type { AppTab } from "@/lib/navigation";
 import { selectDestination, suggestDestinations, type DestinationSuggestion } from "@/lib/trips";
 
 function sourceLabel(source: string): string {
@@ -17,9 +18,10 @@ type DestinationPickerPageProps = {
   tripPlanId: number;
   onComplete: () => void;
   onBack: () => void;
+  onNavigate?: (tab: AppTab) => void;
 };
 
-export default function DestinationPickerPage({ tripPlanId, onComplete, onBack }: DestinationPickerPageProps) {
+export default function DestinationPickerPage({ tripPlanId, onComplete, onBack, onNavigate }: DestinationPickerPageProps) {
   const { theme } = useTheme();
   const [suggestions, setSuggestions] = useState<DestinationSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +58,7 @@ export default function DestinationPickerPage({ tripPlanId, onComplete, onBack }
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100svh" }}>
-      <Navbar onHome={onBack} />
+      <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
 
       <div className="flex flex-col items-center px-4" style={{ paddingTop: "88px", paddingBottom: "2rem" }}>
         <div className="w-full max-w-2xl pt-4">
