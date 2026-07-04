@@ -7,7 +7,7 @@ import ChatbotSidebar from "@/components/trip/ChatbotSidebar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import type { AppTab } from "@/lib/navigation";
-import { listTrips, loadLastTripId, type TripListItem } from "@/lib/trips";
+import { listTrips, type TripListItem } from "@/lib/trips";
 
 type AppDashboardPageProps = {
   onNavigate: (tab: AppTab) => void;
@@ -39,9 +39,7 @@ export default function AppDashboardPage({ onNavigate, onPlanTrip, onOpenTrip }:
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInitialInput, setChatInitialInput] = useState("");
 
-  const lastTripId = loadLastTripId();
   const recentTrips = trips.slice(0, 3);
-  const resumeTrip = lastTripId ? trips.find((t) => t.id === lastTripId) : undefined;
 
   useEffect(() => {
     listTrips()
@@ -129,43 +127,6 @@ export default function AppDashboardPage({ onNavigate, onPlanTrip, onOpenTrip }:
             </div>
           </motion.button>
         </div>
-
-        {resumeTrip && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-8 rounded-2xl px-4 py-4 flex items-center gap-3"
-            style={{ background: theme.badgeBg, border: `1px solid ${theme.badgeBorder}` }}
-          >
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-              style={{ background: theme.dayHeaderBg }}
-            >
-              <MapPin size={18} color="#fff" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p style={{ color: theme.muted, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif", marginBottom: "0.15rem" }}>
-                Continue planning
-              </p>
-              <p style={{ color: theme.heading, fontFamily: "'DM Serif Display', serif", fontSize: "1rem" }}>
-                {resumeTrip.destination ?? "Your trip"}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onOpenTrip(resumeTrip.id)}
-              className="px-4 py-2 rounded-xl text-sm cursor-pointer min-h-[40px]"
-              style={{
-                background: theme.accentDeep,
-                color: "#fff",
-                border: "none",
-                fontFamily: "system-ui, sans-serif",
-              }}
-            >
-              Resume
-            </button>
-          </motion.div>
-        )}
 
         <div className="flex items-center justify-between mb-4">
           <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.25rem", color: theme.heading }}>

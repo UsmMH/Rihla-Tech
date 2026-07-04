@@ -209,3 +209,54 @@ class ConsultChatResponse(BaseModel):
     message: str
     source: str
     fallback_reason: str | None = None
+
+
+class FlightSegmentPublic(BaseModel):
+    origin: str
+    origin_code: str
+    destination: str
+    destination_code: str
+    departure_at: str | None = None
+    arrival_at: str | None = None
+    duration: str | None = None
+    airline: str
+    stops: int = 0
+
+
+class FlightOfferPublic(BaseModel):
+    id: str
+    airline: str
+    price: str
+    price_amount: float | None = None
+    currency: str = "USD"
+    outbound: FlightSegmentPublic
+    inbound: FlightSegmentPublic | None = None
+    booking_url: str | None = None
+
+
+class FlightsResponse(BaseModel):
+    offers: list[FlightOfferPublic]
+    search_url: str
+    source: str
+    fallback_reason: str | None = None
+    origin_code: str | None = None
+    destination_code: str | None = None
+
+
+class HotelOptionPublic(BaseModel):
+    id: str
+    name: str
+    area: str
+    stars: int
+    price_per_night: str
+    price_tier: str
+    amenities: list[str]
+    booking_url: str
+
+
+class HotelsResponse(BaseModel):
+    hotels: list[HotelOptionPublic]
+    search_url: str
+    source: str
+    check_in: date | None = None
+    check_out: date | None = None

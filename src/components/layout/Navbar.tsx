@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { User } from "lucide-react";
 import LogoMark from "@/components/layout/LogoMark";
 import { useTheme } from "@/contexts/ThemeContext";
 import { navigate, type AppTab } from "@/lib/navigation";
@@ -160,40 +161,58 @@ export default function Navbar({
           </div>
         )}
 
-        <div className={`flex items-center gap-2 ${isMarketing ? "md:hidden" : ""}`}>
-          {isMarketing && onStart && (
+        <div className="flex items-center gap-2">
+          {isMarketing ? (
+            <>
+              {onStart && (
+                <button
+                  onClick={onStart}
+                  className="text-sm px-4 py-2 rounded-lg font-medium cursor-pointer md:hidden"
+                  style={{
+                    background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
+                    color: "#fff",
+                    border: "none",
+                    fontFamily: "system-ui, sans-serif",
+                  }}
+                >
+                  Plan Trip
+                </button>
+              )}
+              <button
+                onClick={() => setMenuOpen((o) => !o)}
+                className="w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer md:hidden"
+                style={{ background: theme.toggleBg, border: "none" }}
+                aria-label="Toggle menu"
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  {menuOpen ? (
+                    <path d="M4 4l12 12M16 4L4 16" stroke={theme.toggleIcon} strokeWidth="1.6" strokeLinecap="round" />
+                  ) : (
+                    <path d="M3 6h14M3 10h14M3 14h14" stroke={theme.toggleIcon} strokeWidth="1.6" strokeLinecap="round" />
+                  )}
+                </svg>
+              </button>
+            </>
+          ) : (
             <button
-              onClick={onStart}
-              className="text-sm px-4 py-2 rounded-lg font-medium cursor-pointer"
+              type="button"
+              onClick={() => goToTab("profile")}
+              className="w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer md:hidden"
               style={{
-                background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
-                color: "#fff",
+                background: activePage === "profile" ? theme.badgeBg : theme.toggleBg,
                 border: "none",
-                fontFamily: "system-ui, sans-serif",
               }}
+              aria-label="Profile"
+              aria-current={activePage === "profile" ? "page" : undefined}
             >
-              Plan Trip
+              <User size={18} color={activePage === "profile" ? theme.accentSky : theme.toggleIcon} strokeWidth={2} />
             </button>
           )}
-          <button
-            onClick={() => setMenuOpen((o) => !o)}
-            className="w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer md:hidden"
-            style={{ background: theme.toggleBg, border: "none" }}
-            aria-label="Toggle menu"
-          >
-            <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-              {menuOpen ? (
-                <path d="M4 4l12 12M16 4L4 16" stroke={theme.toggleIcon} strokeWidth="1.6" strokeLinecap="round" />
-              ) : (
-                <path d="M3 6h14M3 10h14M3 14h14" stroke={theme.toggleIcon} strokeWidth="1.6" strokeLinecap="round" />
-              )}
-            </svg>
-          </button>
         </div>
       </nav>
 
       <AnimatePresence>
-        {menuOpen && (
+        {isMarketing && menuOpen && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -206,66 +225,42 @@ export default function Navbar({
               backdropFilter: "blur(14px)",
             }}
           >
-            {isMarketing ? (
-              MARKETING_ITEMS.map((item) => (
-                <button
-                  key={item.sectionId}
-                  onClick={() => scrollToSection(item.sectionId)}
-                  className="w-full text-left py-3 text-sm cursor-pointer"
-                  style={{
-                    color: theme.navLinkText,
-                    background: "none",
-                    border: "none",
-                    borderBottom: `1px solid ${theme.navMenuItemBorder}`,
-                    fontFamily: "system-ui, sans-serif",
-                  }}
-                >
-                  {item.label}
-                </button>
-              ))
-            ) : (
-              APP_ITEMS.map((item) => (
-                <button
-                  key={item.tab}
-                  onClick={() => goToTab(item.tab)}
-                  className="w-full text-left py-3 text-sm cursor-pointer"
-                  style={{
-                    color: activePage === item.tab ? theme.accentSky : theme.navLinkText,
-                    background: "none",
-                    border: "none",
-                    borderBottom: `1px solid ${theme.navMenuItemBorder}`,
-                    fontFamily: "system-ui, sans-serif",
-                    fontWeight: activePage === item.tab ? 600 : 400,
-                  }}
-                >
-                  {item.label}
-                </button>
-              ))
-            )}
-            {isMarketing && (
-              <>
-                <button
-                  onClick={() => {
-                    navigate("/login");
-                    setMenuOpen(false);
-                  }}
-                  className="w-full text-left py-3 text-sm cursor-pointer"
-                  style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
-                >
-                  Log in
-                </button>
-                <button
-                  onClick={() => {
-                    navigate("/register");
-                    setMenuOpen(false);
-                  }}
-                  className="w-full text-left py-3 text-sm cursor-pointer"
-                  style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
-                >
-                  Get Started
-                </button>
-              </>
-            )}
+            {MARKETING_ITEMS.map((item) => (
+              <button
+                key={item.sectionId}
+                onClick={() => scrollToSection(item.sectionId)}
+                className="w-full text-left py-3 text-sm cursor-pointer"
+                style={{
+                  color: theme.navLinkText,
+                  background: "none",
+                  border: "none",
+                  borderBottom: `1px solid ${theme.navMenuItemBorder}`,
+                  fontFamily: "system-ui, sans-serif",
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+            <button
+              onClick={() => {
+                navigate("/login");
+                setMenuOpen(false);
+              }}
+              className="w-full text-left py-3 text-sm cursor-pointer"
+              style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
+            >
+              Log in
+            </button>
+            <button
+              onClick={() => {
+                navigate("/register");
+                setMenuOpen(false);
+              }}
+              className="w-full text-left py-3 text-sm cursor-pointer"
+              style={{ color: theme.navLinkText, background: "none", border: "none", fontFamily: "system-ui, sans-serif" }}
+            >
+              Get Started
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

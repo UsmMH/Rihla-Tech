@@ -14,3 +14,7 @@ class LlmStatusResponse(BaseModel):
 
 class MapboxStatusResponse(BaseModel):
     configured: bool
+
+
+class DuffelStatusResponse(BaseModel):
+    configured: bool

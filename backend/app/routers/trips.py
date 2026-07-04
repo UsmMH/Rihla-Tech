@@ -9,8 +9,10 @@ from app.schemas.trip import (
     ApplyEditRequest,
     EditTripRequest,
     EditTripResponse,
+    FlightsResponse,
     GenerateTripRequest,
     GenerateTripResponse,
+    HotelsResponse,
     SelectDestinationRequest,
     SuggestDestinationsRequest,
     SuggestDestinationsResponse,
@@ -21,7 +23,9 @@ from app.schemas.trip import (
 )
 from app.services.destinations import select_destination, suggest_destinations
 from app.models.trip_plan import TripPlan
+from app.services.flights import search_flights
 from app.services.geocoding import enrich_trip_places, mapbox_configured
+from app.services.hotels import search_hotels
 from app.services.apply_edit import apply_itinerary_edit
 from app.services.chat import mark_chat_edit_applied
 from app.services.edit import edit_trip_alternatives
@@ -93,6 +97,24 @@ def get_trip(
     current_user: User = Depends(get_current_user),
 ) -> TripDetailResponse:
     return get_trip_detail(db, current_user, trip_plan_id)
+
+
+@router.get("/{trip_plan_id}/flights", response_model=FlightsResponse)
+def get_trip_flights(
+    trip_plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FlightsResponse:
+    return search_flights(db, current_user, trip_plan_id)
+
+
+@router.get("/{trip_plan_id}/hotels", response_model=HotelsResponse)
+def get_trip_hotels(
+    trip_plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> HotelsResponse:
+    return search_hotels(db, current_user, trip_plan_id)
 
 
 @router.post("/{trip_plan_id}/enrich-places", response_model=TripDetailResponse)

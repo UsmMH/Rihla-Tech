@@ -1,7 +1,7 @@
 # RihlaTech — Development Plan & Handoff
 
 > **Purpose:** Continue development in a new chat without losing context.  
-> **Last updated:** June 2026 · **Phases 0–5 committed** · **Mobile UI pass (local, uncommitted)** · **Next: app-shell UX redesign**
+> **Last updated:** July 2026 · **Phases 0–6 committed & pushed** · **Next: Phase 7 (Community)**
 
 ---
 
@@ -38,7 +38,7 @@
 
 ```bash
 # 1. Env
-cp .env.example .env   # fill JWT_SECRET, LLM keys, Mapbox tokens (see below)
+cp .env.example .env   # fill JWT_SECRET, LLM keys, Mapbox, Duffel (see below)
 
 # 2. Database
 docker compose up -d
@@ -56,6 +56,7 @@ npm run dev
 - Health: http://localhost:5173/api/health → `{"status":"ok","database":"connected"}`  
 - LLM status: http://localhost:8000/api/health/llm  
 - Mapbox status: http://localhost:8000/api/health/mapbox  
+- Duffel status: http://localhost:8000/api/health/duffel  
 
 **Restart backend AND `npm run dev` after any `.env` change** (Vite only reads `VITE_*` at startup).
 
@@ -69,6 +70,7 @@ npm run dev
 | `LLM_PROVIDER`, `GEMINI_API_KEY`, etc. | LLM | 2+ |
 | `MAPBOX_ACCESS_TOKEN` | Backend geocoding + Search Box + city/POI search | 4+ |
 | `VITE_MAPBOX_ACCESS_TOKEN` | Optional; legacy embedded map components | 4+ |
+| `DUFFEL_ACCESS_TOKEN` | Duffel sandbox flight search | 6 |
 
 Same Mapbox **public** token (`pk.…`) can be used for both. Recommended scopes: geocoding, Search Box.
 
@@ -76,9 +78,7 @@ Same Mapbox **public** token (`pk.…`) can be used for both. Recommended scopes
 
 ## Repository state
 
-- **Git:** `main` on GitHub (`UsmMH/Rihla-Tech`)
-- **Last commit:** `efd6483` — Phase 5 (chatbot, trip history, maps deep-links)
-- **Local (uncommitted):** Mobile-first responsive tweaks (`TripResult`, `ChatbotSidebar`, `QuestionFlow`, `MyTripsPage`)
+- **Git:** `main` on GitHub (`UsmMH/Rihla-Tech`) — synced with remote
 - **Do not commit:** `.env`, `node_modules/`, `backend/.venv/`, `.phase5-backup/`, `__pycache__/`
 
 ---
@@ -90,74 +90,46 @@ Rihla-Tech/
 ├── backend/app/
 │   ├── main.py
 │   ├── models/
-│   │   ├── place.py          # map_search, location_hint, mapbox_id, location_confirmed
-│   │   ├── trip_plan.py, chat_message.py, user.py, question.py
-│   ├── routers/
-│   │   ├── auth.py, quiz.py, trips.py, places.py, chat.py, health.py
+│   ├── routers/          auth, quiz, trips, places, chat, health
 │   ├── services/
-│   │   ├── llm.py, llm_json.py, itinerary.py, destinations.py
-│   │   ├── geocoding.py      # Search Box POI + geocoding v5
-│   │   ├── edit.py, apply_edit.py, chat.py
+│   │   ├── llm.py, itinerary.py, destinations.py, geocoding.py
+│   │   ├── flights.py, hotels.py          # Phase 6
+│   │   ├── edit.py, apply_edit.py, chat.py, consult_chat.py
 │   └── schemas/trip.py
 ├── src/
-│   ├── pages/
-│   │   ├── HomePage.tsx, TripResult.tsx, MyTripsPage.tsx, ...
-│   ├── components/trip/
-│   │   ├── ChatbotSidebar.tsx, PlaceLocationPicker.tsx, TripMap.tsx (legacy), ...
-│   └── lib/trips.ts, places.ts, mapDirections.ts, activityType.ts
+│   ├── pages/              AppDashboard, TripResult, MyTrips, Login, ...
+│   ├── components/
+│   │   ├── layout/       Navbar, AppBottomNav
+│   │   ├── auth/         AuthLayout (light mode)
+│   │   └── trip/         ChatbotSidebar, QuestionFlow, OriginCityInput
+│   └── lib/trips.ts, places.ts, mapDirections.ts
 ├── plan.md
 └── README.md
 ```
 
 ---
 
-## User flow (current — to be redesigned)
+## User flow (current)
 
 ```
-LandingPage (marketing) → quiz → preferences → [destination picker] → result
-         ↘ My Trips
+Login (light mode) → Home dashboard
+          ├─ Plan new trip → Quiz → Preferences → [AI destination picker] → Trip result
+          ├─ Ask AI (consult) — general travel Q&A, no trip required
+          └─ My Trips → reopen / delete itineraries
+
+Trip result → collapsible Flights / Hotels / Days
+            → Ask AI (trip chat) → propose edit → Apply / "yes"
+            → Google Maps deep-links per activity + day route
+            → Back to My Trips
+
+App nav (mobile): Home · My Trips · Community | Profile icon (top-right)
+App nav (desktop): Home · My Trips · Community · Profile
 ```
 
-**Pain points (user feedback, June 2026):**
-- Feels like a **company/marketing site**, not a consumer travel app
-- Navbar shows **Features / How it Works / Destinations** even during quiz, trip result, My Trips — wrong for in-app flows
-- No real **app home** after login — `LandingPage` is a marketing hero, not a dashboard
-- **Chatbot only on trip result** — user wants AI consult + “plan a trip” from the main screen
-- **Community** deferred (Phase 7) but should appear in nav as placeholder or “coming soon”
-
-**Target UX (next priority):**
-
-```
-[App shell: bottom tab bar or compact top nav]
-  Home      — dashboard: greet user, quick actions (Plan trip, Ask AI), recent trips
-  My Trips  — existing list
-  Community — placeholder (Phase 7)
-  Profile   — account, theme, logout (uses GET /api/auth/me)
-
-Marketing landing (Features, How it Works) → only for logged-out visitors OR separate /welcome route — NOT shown inside the app.
-
-Home screen dual entry:
-  1. "Plan a new trip" → existing quiz flow
-  2. "Ask AI" → chatbot (consultation mode; may need new backend or draft trip — see below)
-```
-
-**Chat from home — design note:**  
-Current API requires `trip_plan_id` + generated itinerary (`POST /api/chat/message`, `GET /api/chat/{id}/messages`). Options for home chat:
-- **A)** General chat endpoint (no trip; LLM answers travel questions, CTA to start quiz)
-- **B)** Auto-create empty `trip_plan` on first message; chat guides user into quiz
-- **C)** Reuse chat UI in “browse” mode with mock/demo context until trip exists  
-Pick one in next chat before implementing.
-
----
-
-## User flow (technical, unchanged for now)
-
-- **My Trips** in navbar — list/load past trips; delete with confirm
-- `tripPlanId` + last page persisted in `localStorage` — refresh on result page restores trip
+**Session behavior:**
+- Login / app open → always lands on **Home** (not last trip page)
+- `localStorage` keeps last `tripPlanId` for internal resume hints only (no Home “continue” card)
 - Result page: `GET /trips/{id}` first; if 404 → `POST /trips/generate`
-- **Ask AI** button opens chatbot sidebar (single button; no separate Edit Trip)
-- Activity cards: real **venue names** as titles
-- **Maps UX:** per-activity Google Maps deep-links + per-day driving routes (no embedded map on result page)
 
 ---
 
@@ -178,7 +150,7 @@ Pick one in next chat before implementing.
 | GET | `/api/quiz/questions?phase=quiz\|preferences` | Questions + options |
 | POST | `/api/quiz/submit` | Save answers; returns `needs_destination_suggestion` |
 
-### Trips (Phase 2–5)
+### Trips (Phase 2–6)
 
 | Method | Path | When called |
 |---|---|---|
@@ -188,6 +160,8 @@ Pick one in next chat before implementing.
 | POST | `/api/trips/{id}/destination` | User picks suggested city |
 | POST | `/api/trips/generate` | Result page — create AI itinerary + `places` rows |
 | GET | `/api/trips/{id}` | Result page — load trip |
+| GET | `/api/trips/{id}/flights` | Result page — when `include_flights` |
+| GET | `/api/trips/{id}/hotels` | Result page — when `include_hotels` |
 | POST | `/api/trips/{id}/enrich-places` | Re-geocode (skips `location_confirmed` pins) |
 | POST | `/api/trips/{id}/edit` | LLM → 3 **destination** alternatives |
 | POST | `/api/trips/{id}/apply-edit` | Apply itinerary changes; optional `chat_message_id` |
@@ -200,12 +174,13 @@ Pick one in next chat before implementing.
 | GET | `/api/places/search?q=` | City autocomplete (origin/destination) |
 | GET | `/api/places/search-poi?q=&trip_plan_id=` | POI search (Search Box) |
 
-### Chat (Phase 5)
+### Chat (Phase 5 + 5b)
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/chat/{trip_plan_id}/messages` | Load chat history |
-| POST | `/api/chat/message` | Send message; auto-applies on "yes"; returns `proposes_edit` + `apply_instruction` |
+| GET | `/api/chat/{trip_plan_id}/messages` | Load trip chat history |
+| POST | `/api/chat/message` | Trip chat; auto-applies on "yes"; returns `proposes_edit` + `apply_instruction` |
+| POST | `/api/chat/consult` | Home consult chat — no trip required; client-side history in request body |
 
 ### Health
 
@@ -214,119 +189,49 @@ Pick one in next chat before implementing.
 | GET | `/api/health` | DB status |
 | GET | `/api/health/llm` | LLM provider/model |
 | GET | `/api/health/mapbox` | Geocoding configured? |
+| GET | `/api/health/duffel` | Duffel token configured? |
 
 ---
 
 ## Completed phases
 
-### Phase 0 — Project setup ✅
+### Phase 0–5b ✅
 
-### Phase 1 — Authentication ✅
+See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps deep-links, chatbot, app shell, consult chat.
 
-### Phase 2 — Quiz + Preferences ✅
-
-### Phase 3 — AI itinerary generation ✅
-
-### Phase 4 — Map + places ✅
-
-Mapbox geocoding v5, `TripMap.tsx`, city autocomplete, card↔pin linking, category icons.
-
-### Phase 5 — Edit + chatbot + trip history + maps deep-links ✅
+### Phase 6 — Flights, hotels, deep-links ✅
 
 **Backend:**
-- [x] `GET /api/trips`, `DELETE /api/trips/{id}`
-- [x] `POST /api/trips/{id}/edit` — destination alternatives (LLM)
-- [x] `POST /api/trips/{id}/apply-edit` — update places by `place_id`, optional `chat_message_id`
-- [x] `POST /api/chat/message`, `GET /api/chat/{id}/messages` — persistent `chat_messages`
-- [x] Chat context: history + pending-edit awareness; supersede stale Apply proposals
-- [x] Itinerary prompt: real **venue names** + `map_search`, `location_hint`, optional LLM lat/lng
-- [x] `places` columns: `map_search`, `location_hint`, `mapbox_id`, `location_confirmed`
-- [x] `PATCH /api/trips/{id}/places/{place_id}` — user-confirmed locations
-- [x] `GET /api/places/search-poi` — Mapbox Search Box POI search
-- [x] Mapbox Search Box as primary POI resolver (backend)
+- [x] `backend/app/services/flights.py` — Duffel sandbox + mock + Google Flights deep-links
+- [x] `backend/app/services/hotels.py` — mock cards + Booking.com deep-links
+- [x] `GET /api/trips/{id}/flights`, `/hotels`
+- [x] `GET /api/health/duffel`
+- [x] `DUFFEL_ACCESS_TOKEN` in config + `.env.example`
 
 **Frontend:**
-- [x] `MyTripsPage.tsx` — list, open, delete trips
-- [x] `ChatbotSidebar.tsx` — history, Apply button, yes-confirmation, DB-synced apply state
-- [x] Trip persistence via `localStorage` (`tripPlanId` + page)
-- [x] Dynamic destination alternatives on result page (`POST /edit`)
-- [x] Single **Ask AI** button; light mode default
-- [x] **Maps pivot:** `TripResult` uses Google Maps deep-links per activity + per-day driving routes + leg-by-leg links (`mapDirections.ts`)
-- [x] Embedded `TripMap` retained in codebase but not shown on result page
+- [x] Collapsible **Flights** / **Hotels** sections on trip result (horizontal card scroll)
+- [x] Collapsible **per-day** itinerary panels (Day 1 open by default)
+- [x] Trip result **← My Trips** back navigation (no bottom Home button)
 
-**Acceptable for now:**
-- Explore Alternatives = other **destinations**, not activity swaps
-- `PlaceLocationPicker.tsx` / `TripMap.tsx` kept for future use; result page uses deep-links only
+### Phase 6b — UX polish ✅
 
----
-
-## Phase 5b — Mobile-first UI (local, uncommitted)
-
-Partial pass done — vertical card stacks, touch targets, sticky quiz nav, full-screen mobile chat:
-- [x] `TripResult.tsx` — vertical activity cards on mobile; full-width buttons; bottom Ask AI bar
-- [x] `ChatbotSidebar.tsx` — full-screen mobile; larger tap targets; wrapping quick suggestions
-- [x] `QuestionFlow.tsx` — sticky bottom Back/Next; single-column choices on mobile
-- [x] `MyTripsPage.tsx` — full-width CTAs; larger delete button
-
-**Not done:** app-shell navigation, marketing nav removal, home dashboard, profile page, home chat.
+- [x] Light-mode **login / register** (`AuthLayout` uses `lightTheme`)
+- [x] Mobile nav: no hamburger on app screens; **Profile** icon top-right; bottom bar Home · My Trips · Community
+- [x] My Trips: removed marketing footer; in-app delete confirmation (no browser `confirm`)
+- [x] Removed redundant Home **“Continue planning”** card (use Recent trips / My Trips)
+- [x] Origin/destination search: close suggestions after picking a city
+- [x] Quiz footer: fixed button heights + spacer (no layout shift on step change)
+- [x] My Trips: hide “Itinerary ready” badge for completed trips
 
 ---
 
-## Current priority — App-shell UX redesign
-
-**Goal:** Feel like a normal user travel app (Airbnb / Google Travel vibe), not a dev/marketing landing page.
-
-### Tasks (suggested order)
-
-1. **Navigation model**
-   - Split **marketing** (`LandingPage` — Features, How it Works) from **app** routes
-   - Logged-in users land on **Home** dashboard, not marketing hero
-   - `Navbar.tsx`: context-aware — marketing links only on public landing; app nav elsewhere (Home, My Trips, Profile; Community stub)
-
-2. **Home dashboard** (new `HomeDashboardPage.tsx` or repurpose post-login landing)
-   - Greeting + “Plan a new trip” CTA
-   - “Ask AI” opens chatbot (consult or plan — per chat design decision)
-   - Recent trips (reuse `GET /api/trips` slice)
-   - Optional: resume last trip card
-
-3. **Profile page** (new)
-   - Email from `GET /api/auth/me`, theme toggle, logout
-   - No backend changes required
-
-4. **Wire chat on home**
-   - Depends on chat design decision (general vs trip-tied)
-   - Reuse `ChatbotSidebar.tsx` where possible
-
-5. **Routing cleanup**
-   - `HomePage.tsx` state machine: add `home` | `profile` pages; default authenticated → `home`
-   - Consider React Router later if state machine gets unwieldy (optional, not required for FYP)
-
-6. **Commit** mobile UI pass + app-shell work when stable
-
-### Out of scope for this pass
-- Phase 6 flights/hotels
-- Full Community (Phase 7) — nav stub only
-- Admin panel
-
----
-
-## Phase 6 — Flights, hotels, deep-links
-
-- [ ] Duffel sandbox (flights) or mock + deep-links
-- [ ] Mock hotel cards + Booking.com search URLs
-- [ ] Only when `include_flights` / `include_hotels` true
-
-**API needed before starting:** Duffel sandbox token (confirm with team). Hotels = deep-links only, no extra API.
-
----
-
-## Phase 7 — Community
+## Current priority — Phase 7: Community
 
 - [ ] Share, save, vote, comment
 
 ---
 
-neither## Phase 8 — Admin + deployment
+## Phase 8 — Admin + deployment
 
 - [ ] Admin dashboard
 - [ ] Cloud deploy (Railway / Render / university server — TBD)
@@ -340,37 +245,35 @@ neither## Phase 8 — Admin + deployment
 3. AI itinerary generation ✅  
 4. Map + geocoding ✅  
 5. Edit trip + chatbot + trip history + maps deep-links ✅  
-5b. Mobile-first responsive tweaks ✅ (local, uncommitted)  
-6. **App-shell UX** (home, profile, nav split, home chat) ← **CURRENT**  
-7. Flights/hotels + deep-links  
-8. Community  
-9. Admin  
+5b. App-shell UX + mobile polish + consult chat ✅  
+6. Flights/hotels + deep-links ✅  
+6b. Trip result UX + auth light mode + nav polish ✅  
+7. Community  
+8. Admin  
 
 ---
 
 ## Known gotchas
 
 1. **Postgres port:** Docker `5433:5432`.
-2. **Backend restart:** Required after `.env` changes and for new columns (`chat_messages`, `places.map_search`, etc. via `create_all` + patches in `main.py`).
+2. **Backend restart:** Required after `.env` changes.
 3. **Frontend restart:** Required after `VITE_*` env changes.
 4. **LLM JSON:** Prefer **Gemini** for reliability.
-5. **Geocoding:** Search Box >> Geocoding v5 for POIs; `location_confirmed` pins skipped on enrich.
-6. **Chat apply:** User says "yes" or taps **Apply to itinerary**; state synced via DB (`proposes_edit` flag).
-7. **Theme:** Light mode default; clear `rihlatech_theme` in localStorage to reset.
-8. **Maps on result page:** Google Maps URL deep-links only — driving mode for routes.
-9. **Typecheck:** `npm run typecheck` needs `typescript` in devDependencies (not installed in all envs).
+5. **Duffel:** Test token starts with `duffel_test_`; restart backend after adding to `.env`.
+6. **Chat apply:** User says "yes" or taps **Apply to itinerary**; state synced via DB.
+7. **Theme:** Light mode default in app; login/register always light. Clear `rihlatech_theme` in localStorage to reset.
+8. **Login landing:** Always Home — not last trip page.
+9. **Consult chat:** Client-side history only; not persisted to DB.
+10. **Maps on result page:** Google Maps deep-links only.
+11. **Typecheck:** `npm run typecheck` needs `typescript` in devDependencies.
 
 ---
 
 ## Handoff — start here in next chat
 
-1. **App-shell UX redesign** — see “Current priority” above; read user pain points in User flow section.
+1. **Phase 7 — Community** — share, save, vote, comment.
 
-2. **Decide home chat approach** (general chat API vs draft trip vs browse-only UI).
-
-3. **Commit** local mobile UI diff when combined with app-shell work (or split commits).
-
-4. **Phase 6** when ready — ask for **Duffel API token** before wiring flights.
+2. **Optional polish** — persist consult chat server-side; `/welcome` marketing route for logged-out users.
 
 ---
 
@@ -380,35 +283,17 @@ neither## Phase 8 — Admin + deployment
 I'm working on RihlaTech — AI travel planning web app (KSU IS498 capstone).
 Read plan.md and README.md first; plan.md is the source of truth.
 
-Repo: UsmMH/Rihla-Tech · local: Rihla-Tech
-Stack: React 18 + Vite + Tailwind + FastAPI + PostgreSQL (Docker 5433) + Gemini/OpenRouter + Mapbox (no Google SDK)
+Repo: UsmMH/Rihla-Tech
+Stack: React 18 + Vite + Tailwind + FastAPI + PostgreSQL (Docker 5433) + Gemini/Duffel/Mapbox
 
-Done (committed efd6483 — Phase 5):
-- Auth, quiz, AI itinerary, Mapbox city search
-- My Trips, delete, chatbot + history, apply-edit, destination alternatives
-- Result page: Google Maps deep-links + per-day driving routes
-- Chat: context-aware edits, Apply synced to DB
+Done through Phase 6 + UX polish:
+- Duffel flights + mock hotels on trip result (collapsible sections)
+- Collapsible day-by-day itinerary; back to My Trips
+- Light login/register; mobile nav polish; in-app delete confirm
 
-Done locally (uncommitted):
-- Mobile-first tweaks: vertical cards on TripResult, full-screen mobile chat,
-  sticky quiz nav, touch-friendly buttons (TripResult, ChatbotSidebar, QuestionFlow, MyTripsPage)
+NEXT: Phase 7 Community
 
-NEXT PRIORITY — App-shell UX (consumer app, not marketing site):
-1. Remove marketing nav (Features, How it Works, Destinations) from in-app flows
-   (quiz, result, My Trips). Marketing stays on public landing only.
-2. Add real app Home dashboard after login: greet user, "Plan new trip", "Ask AI",
-   recent trips — NOT the current marketing LandingPage hero.
-3. App navigation: Home | My Trips | Community (placeholder) | Profile
-4. Chatbot accessible from Home — user can consult AI OR start planning a trip.
-   Current chat API requires trip_plan_id + itinerary — decide approach (see plan.md).
-5. Profile page: auth/me, theme toggle, logout
-
-Key files: plan.md, src/pages/HomePage.tsx, src/pages/LandingPage.tsx,
-src/components/layout/Navbar.tsx, src/components/trip/ChatbotSidebar.tsx,
-src/pages/TripResult.tsx, src/pages/MyTripsPage.tsx, backend/app/services/chat.py
-
-Constraints: No Google Maps SDK; deep-links OK. Minimal scope. Match existing theme.
-Don't commit until I ask. Tell me if you need a design decision before coding.
+Key files: plan.md, src/pages/TripResult.tsx, backend/app/services/flights.py, hotels.py
 ```
 
 ---

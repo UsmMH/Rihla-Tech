@@ -1,15 +1,29 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, type CSSProperties } from "react";
 
 import { AuthLayout } from "@/components/auth/AuthLayout";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError } from "@/lib/api";
+import { lightTheme } from "@/themes";
 
 type LoginPageProps = {
   onSuccess: () => void;
   onGoRegister: () => void;
+};
+
+const theme = lightTheme;
+
+const inputStyle: CSSProperties = {
+  background: theme.inputBg,
+  border: `1px solid ${theme.inputBorder}`,
+  color: theme.inputText,
+  fontFamily: "system-ui, sans-serif",
+};
+
+const labelStyle: CSSProperties = {
+  color: theme.body,
+  fontFamily: "system-ui, sans-serif",
+  fontSize: "0.875rem",
+  fontWeight: 500,
 };
 
 export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
@@ -44,7 +58,8 @@ export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
           <button
             type="button"
             onClick={onGoRegister}
-            className="text-sky-300 hover:text-sky-200 underline-offset-4 hover:underline"
+            className="underline-offset-4 hover:underline cursor-pointer"
+            style={{ color: theme.accentSky, background: "none", border: "none", fontFamily: "inherit" }}
           >
             Create one
           </button>
@@ -53,40 +68,56 @@ export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="email" className="text-slate-200">
+          <label htmlFor="email" style={labelStyle}>
             Email
-          </Label>
-          <Input
+          </label>
+          <input
             id="email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
-            className="bg-slate-900/60 border-slate-700 text-white"
+            className="w-full rounded-xl px-4 py-3 outline-none min-h-[48px] text-base focus:ring-2"
+            style={inputStyle}
           />
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="password" className="text-slate-200">
+          <label htmlFor="password" style={labelStyle}>
             Password
-          </Label>
-          <Input
+          </label>
+          <input
             id="password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
-            className="bg-slate-900/60 border-slate-700 text-white"
+            className="w-full rounded-xl px-4 py-3 outline-none min-h-[48px] text-base"
+            style={inputStyle}
           />
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && (
+          <p className="text-sm" style={{ color: "#c62828", fontFamily: "system-ui, sans-serif" }}>
+            {error}
+          </p>
+        )}
 
-        <Button type="submit" className="w-full" disabled={isSubmitting}>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full rounded-xl py-3 font-medium min-h-[48px] cursor-pointer disabled:opacity-60"
+          style={{
+            background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
+            color: "#fff",
+            border: "none",
+            fontFamily: "system-ui, sans-serif",
+          }}
+        >
           {isSubmitting ? "Signing in..." : "Sign in"}
-        </Button>
+        </button>
       </form>
     </AuthLayout>
   );

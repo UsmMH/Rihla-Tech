@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { ExternalLink, MapPin, Route } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Building2, ChevronDown, ChevronLeft, ExternalLink, MapPin, Plane, Route } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
 import ChatbotSidebar from "@/components/trip/ChatbotSidebar";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -12,12 +12,12 @@ import {
   googleMapsSearchUrl,
 } from "@/lib/mapDirections";
 import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
-import { generateTrip, getTrip, saveLastTripId, type TripDetail } from "@/lib/trips";
+import { generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
 import type { AppTab } from "@/lib/navigation";
 
 type TripResultProps = {
   tripPlanId: number;
-  onHome: () => void;
+  onBack: () => void;
   onNavigate?: (tab: AppTab) => void;
 };
 
@@ -25,15 +25,289 @@ function sourceLabel(source: string): string {
   if (source === "gemini") return "Gemini";
   if (source === "openrouter") return "OpenRouter";
   if (source === "openai") return "OpenAI";
+  if (source === "duffel") return "Duffel";
   return "Demo";
 }
 
-export default function TripResult({ tripPlanId, onHome, onNavigate }: TripResultProps) {
+function stopsLabel(stops: number): string {
+  if (stops <= 0) return "Nonstop";
+  if (stops === 1) return "1 stop";
+  return `${stops} stops`;
+}
+
+function starsLabel(count: number): string {
+  return "★".repeat(Math.max(1, Math.min(count, 5)));
+}
+
+function flightsSummary(flights: FlightsResult): string {
+  const count = flights.offers.length;
+  if (count === 0) return "No options found";
+  const prices = flights.offers
+    .map((o) => o.price_amount)
+    .filter((p): p is number => p != null);
+  const cheapest = prices.length ? Math.min(...prices) : null;
+  const prefix = count === 1 ? "1 option" : `${count} options`;
+  return cheapest != null ? `${prefix} · from ${flights.offers[0]?.currency ?? "USD"} ${cheapest}` : prefix;
+}
+
+function hotelsSummary(hotels: HotelsResult): string {
+  const count = hotels.hotels.length;
+  if (count === 0) return "No stays found";
+  const cheapest = hotels.hotels[0]?.price_per_night ?? "";
+  const prefix = count === 1 ? "1 stay" : `${count} stays`;
+  return cheapest ? `${prefix} · ${cheapest}` : prefix;
+}
+
+function daySummary(dayPlan: DayItinerary): string {
+  const count = dayPlan.activities.length;
+  const activities = count === 1 ? "1 activity" : `${count} activities`;
+  return `${dayPlan.theme} · ${activities}`;
+}
+
+type CollapsiblePanelProps = {
+  icon: ReactNode;
+  title: string;
+  summary: string;
+  loading?: boolean;
+  externalUrl?: string | null;
+  externalLabel?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+};
+
+function CollapsiblePanel({
+  icon,
+  title,
+  summary,
+  loading = false,
+  externalUrl,
+  externalLabel,
+  defaultOpen = false,
+  children,
+}: CollapsiblePanelProps) {
+  const { theme } = useTheme();
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden"
+      style={{ background: theme.isDark ? "rgba(255,255,255,0.03)" : theme.sectionAlt, border: `1px solid ${theme.border}` }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3.5 text-left cursor-pointer min-h-[52px]"
+        style={{ background: "none", border: "none" }}
+        aria-expanded={open}
+      >
+        <span className="flex-shrink-0">{icon}</span>
+        <span className="flex-1 min-w-0">
+          <span
+            className="block"
+            style={{ fontFamily: "'DM Serif Display', serif", color: theme.heading, fontSize: "1.05rem", lineHeight: 1.2 }}
+          >
+            {title}
+          </span>
+          <span
+            className="block truncate mt-0.5"
+            style={{ color: theme.muted, fontSize: "0.78rem", fontFamily: "system-ui, sans-serif" }}
+          >
+            {loading ? "Loading…" : summary}
+          </span>
+        </span>
+        <ChevronDown
+          size={18}
+          color={theme.muted}
+          className="flex-shrink-0 transition-transform"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+        />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 pt-0" style={{ borderTop: `1px solid ${theme.border}` }}>
+              {externalUrl && externalLabel && (
+                <a
+                  href={externalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 mb-3 mt-3 text-sm"
+                  style={{ color: theme.accentSky, fontFamily: "system-ui, sans-serif", fontWeight: 600, textDecoration: "none" }}
+                >
+                  {externalLabel}
+                  <ExternalLink size={12} />
+                </a>
+              )}
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function FlightOfferCard({ offer, theme }: { offer: FlightOffer; theme: ReturnType<typeof useTheme>["theme"] }) {
+  return (
+    <div
+      className="rounded-xl p-3.5 flex flex-col flex-shrink-0 snap-start w-[min(85vw,280px)]"
+      style={{ background: theme.activityCardBg, border: `1px solid ${theme.activityCardBorder}` }}
+    >
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <p style={{ fontFamily: "'DM Serif Display', serif", color: theme.activityHeading, fontSize: "0.95rem", lineHeight: 1.2 }}>
+          {offer.airline}
+        </p>
+        <span style={{ color: theme.accentSky, fontWeight: 700, fontSize: "0.85rem", fontFamily: "system-ui, sans-serif", flexShrink: 0 }}>
+          {offer.price}
+        </span>
+      </div>
+      <p style={{ color: theme.muted, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>
+        {offer.outbound.origin_code || offer.outbound.origin} → {offer.outbound.destination_code || offer.outbound.destination}
+        {offer.inbound ? " · round trip" : ""}
+      </p>
+      <p className="flex-1" style={{ color: theme.activityBody, fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.45 }}>
+        {offer.outbound.duration ?? "—"} · {stopsLabel(offer.outbound.stops)}
+      </p>
+      {offer.booking_url && (
+        <a
+          href={offer.booking_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 inline-flex items-center justify-center gap-1 w-full px-2 py-2 rounded-lg text-xs"
+          style={{
+            background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
+            color: "#fff",
+            fontFamily: "system-ui, sans-serif",
+            fontWeight: 600,
+            textDecoration: "none",
+          }}
+        >
+          Google Flights
+          <ExternalLink size={10} />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function HorizontalCardRow({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory -mx-1 px-1">
+      {children}
+    </div>
+  );
+}
+
+function DayActivityCard({
+  activity,
+  dayNumber,
+  destination,
+  previousActivity,
+  theme,
+}: {
+  activity: TripActivity;
+  dayNumber: number;
+  destination: string;
+  previousActivity: TripActivity | null;
+  theme: ReturnType<typeof useTheme>["theme"];
+}) {
+  const typeStyle = getActivityTypeStyle(activity.type);
+  const TypeIcon = typeStyle.icon;
+  const dayColor = dayPinColor(dayNumber);
+  const googleMapsUrl = googleMapsSearchUrl(activity.name, destination);
+  const legGoogleUrl = previousActivity
+    ? googleMapsLegUrl(previousActivity.name, activity.name, destination)
+    : null;
+
+  return (
+    <div
+      className="rounded-xl overflow-hidden flex flex-col flex-shrink-0 snap-start w-[min(85vw,280px)]"
+      style={{
+        background: theme.activityCardBg,
+        border: `1px solid ${theme.activityCardBorder}`,
+        borderTop: `3px solid ${dayColor}`,
+      }}
+    >
+      <div className="flex items-center justify-between px-3 py-2" style={{ background: typeStyle.gradient }}>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <TypeIcon size={14} color="#fff" strokeWidth={2} />
+          <span className="truncate" style={{ color: "#fff", fontSize: "0.7rem", fontFamily: "system-ui, sans-serif", fontWeight: 500 }}>
+            {activity.type}
+          </span>
+        </div>
+        <span style={{ color: "rgba(255,255,255,0.9)", fontSize: "0.68rem", fontFamily: "system-ui, sans-serif", flexShrink: 0 }}>
+          {activity.time}
+        </span>
+      </div>
+      <div className="p-3 flex flex-col flex-1 min-h-0">
+        <h3 style={{ fontFamily: "'DM Serif Display', serif", color: theme.activityHeading, fontSize: "0.92rem", lineHeight: 1.25, marginBottom: 6 }}>
+          {activity.name}
+        </h3>
+        <p
+          className="flex-1 line-clamp-3 mb-3"
+          style={{ color: theme.activityBody, fontSize: "0.75rem", lineHeight: 1.45, fontFamily: "system-ui, sans-serif" }}
+        >
+          {activity.desc}
+        </p>
+        <div className="mt-auto flex flex-col gap-1.5">
+          {legGoogleUrl && (
+            <a
+              href={legGoogleUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-1 w-full px-2 py-1.5 rounded-lg text-xs"
+              style={{
+                background: theme.isDark ? "rgba(88,171,212,0.1)" : "rgba(88,171,212,0.12)",
+                border: `1px solid ${theme.accentSky}44`,
+                color: theme.accentSky,
+                fontFamily: "system-ui, sans-serif",
+                fontWeight: 500,
+                textDecoration: "none",
+              }}
+            >
+              <Route size={12} strokeWidth={2} />
+              From previous
+            </a>
+          )}
+          <a
+            href={googleMapsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-1 w-full px-2 py-2 rounded-lg text-xs"
+            style={{
+              background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
+              color: "#fff",
+              fontFamily: "system-ui, sans-serif",
+              fontWeight: 600,
+              textDecoration: "none",
+            }}
+          >
+            <MapPin size={12} strokeWidth={2} />
+            Maps
+            <ExternalLink size={10} />
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResultProps) {
   const { theme } = useTheme();
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInitialInput, setChatInitialInput] = useState("");
-  const [savedDays, setSavedDays] = useState<number[]>([]);
   const [trip, setTrip] = useState<TripDetail | null>(null);
+  const [flights, setFlights] = useState<FlightsResult | null>(null);
+  const [hotels, setHotels] = useState<HotelsResult | null>(null);
+  const [flightsLoading, setFlightsLoading] = useState(false);
+  const [hotelsLoading, setHotelsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,14 +338,34 @@ export default function TripResult({ tripPlanId, onHome, onNavigate }: TripResul
     loadItinerary();
   }, [loadItinerary, tripPlanId]);
 
-  function toggleSave(day: number) {
-    setSavedDays((prev) => prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]);
-  }
+  useEffect(() => {
+    if (!trip) return;
+
+    if (trip.trip_plan.include_flights) {
+      setFlightsLoading(true);
+      getTripFlights(tripPlanId)
+        .then(setFlights)
+        .catch(() => setFlights(null))
+        .finally(() => setFlightsLoading(false));
+    } else {
+      setFlights(null);
+    }
+
+    if (trip.trip_plan.include_hotels) {
+      setHotelsLoading(true);
+      getTripHotels(tripPlanId)
+        .then(setHotels)
+        .catch(() => setHotels(null))
+        .finally(() => setHotelsLoading(false));
+    } else {
+      setHotels(null);
+    }
+  }, [trip, tripPlanId]);
 
   if (loading) {
     return (
       <div style={{ background: theme.pageBg, minHeight: "100vh" }}>
-        <Navbar variant="app" onHome={onHome} onNavigate={onNavigate} />
+        <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
         <div className="flex flex-col items-center justify-center px-4" style={{ minHeight: "70vh", color: theme.muted }}>
           <div
             className="w-10 h-10 rounded-full border-2 border-t-transparent animate-spin mb-4"
@@ -91,7 +385,7 @@ export default function TripResult({ tripPlanId, onHome, onNavigate }: TripResul
   if (error || !trip) {
     return (
       <div style={{ background: theme.pageBg, minHeight: "100vh" }}>
-        <Navbar variant="app" onHome={onHome} onNavigate={onNavigate} />
+        <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
         <div className="flex flex-col items-center justify-center gap-4 px-4" style={{ minHeight: "70vh" }}>
           <p style={{ color: theme.body, fontFamily: "system-ui, sans-serif", textAlign: "center" }}>
             {error ?? "Something went wrong"}
@@ -107,11 +401,11 @@ export default function TripResult({ tripPlanId, onHome, onNavigate }: TripResul
             </button>
             <button
               type="button"
-              onClick={onHome}
+              onClick={onBack}
               className="px-4 py-2.5 rounded-xl"
               style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body, fontFamily: "system-ui, sans-serif" }}
             >
-              Start over
+              My Trips
             </button>
           </div>
         </div>
@@ -121,7 +415,7 @@ export default function TripResult({ tripPlanId, onHome, onNavigate }: TripResul
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100vh", transition: "background 0.3s" }}>
-      <Navbar variant="app" onHome={onHome} onNavigate={onNavigate} />
+      <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
 
       <div
         className="relative"
@@ -135,14 +429,17 @@ export default function TripResult({ tripPlanId, onHome, onNavigate }: TripResul
         }}
       >
         <div className="max-w-5xl mx-auto px-4 md:px-6 py-8 md:py-12">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 mb-5 cursor-pointer min-h-[40px]"
+            style={{ background: "none", border: "none", color: theme.accentSky, fontFamily: "system-ui, sans-serif", fontSize: "0.88rem", fontWeight: 500, padding: 0 }}
+          >
+            <ChevronLeft size={18} strokeWidth={2} />
+            My Trips
+          </button>
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-5">
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 rounded-full" style={{ background: "#4CAF50" }} />
-                <span style={{ color: theme.muted, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif", letterSpacing: "0.08em" }}>
-                  YOUR AI-GENERATED ITINERARY
-                </span>
-              </div>
               <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "clamp(1.8rem, 8vw, 3.5rem)", color: theme.heading, lineHeight: 1.1, marginBottom: "0.4rem" }}>
                 {trip.destination}
               </h1>
@@ -210,217 +507,149 @@ export default function TripResult({ tripPlanId, onHome, onNavigate }: TripResul
       </div>
 
       <div className="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-8 pb-32 md:pb-12">
-        <div className="space-y-10">
+        {(trip.trip_plan.include_flights || trip.trip_plan.include_hotels) && (
+          <div className="space-y-3 mb-8">
+            {trip.trip_plan.include_flights && (
+              <CollapsiblePanel
+                icon={<Plane size={18} style={{ color: theme.accentSky }} />}
+                title="Flights"
+                summary={flights ? flightsSummary(flights) : "Searching…"}
+                loading={flightsLoading}
+                externalUrl={flights?.search_url}
+                externalLabel="Search all on Google Flights"
+              >
+                {flights && (
+                  <>
+                    {flights.source === "mock" && flights.fallback_reason && (
+                      <p className="mb-3 text-xs" style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}>
+                        Demo prices — {flights.fallback_reason}
+                      </p>
+                    )}
+                    {flights.source === "duffel" && (
+                      <p className="mb-3 text-xs" style={{ color: theme.accentSky, fontFamily: "system-ui, sans-serif" }}>
+                        Live sandbox prices via Duffel
+                      </p>
+                    )}
+                    <HorizontalCardRow>
+                      {flights.offers.map((offer) => (
+                        <FlightOfferCard key={offer.id} offer={offer} theme={theme} />
+                      ))}
+                    </HorizontalCardRow>
+                  </>
+                )}
+              </CollapsiblePanel>
+            )}
+
+            {trip.trip_plan.include_hotels && (
+              <CollapsiblePanel
+                icon={<Building2 size={18} style={{ color: theme.accentSky }} />}
+                title="Hotels"
+                summary={hotels ? hotelsSummary(hotels) : "Finding stays…"}
+                loading={hotelsLoading}
+                externalUrl={hotels?.search_url}
+                externalLabel="Search all on Booking.com"
+              >
+                {hotels && (
+                  <>
+                    {hotels.check_in && hotels.check_out && (
+                      <p className="mb-3 text-xs" style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}>
+                        {hotels.check_in} → {hotels.check_out}
+                      </p>
+                    )}
+                    <HorizontalCardRow>
+                      {hotels.hotels.map((hotel) => (
+                        <div
+                          key={hotel.id}
+                          className="rounded-xl p-3.5 flex flex-col flex-shrink-0 snap-start w-[min(85vw,260px)]"
+                          style={{ background: theme.activityCardBg, border: `1px solid ${theme.activityCardBorder}` }}
+                        >
+                          <p style={{ color: theme.accentSky, fontSize: "0.68rem", fontFamily: "system-ui, sans-serif" }}>
+                            {starsLabel(hotel.stars)} · {hotel.area}
+                          </p>
+                          <h3 style={{ fontFamily: "'DM Serif Display', serif", color: theme.activityHeading, fontSize: "0.92rem", lineHeight: 1.25, marginTop: 4 }}>
+                            {hotel.name}
+                          </h3>
+                          <p style={{ color: theme.accentSky, fontWeight: 600, fontSize: "0.8rem", fontFamily: "system-ui, sans-serif", margin: "6px 0 8px" }}>
+                            {hotel.price_per_night}
+                          </p>
+                          <a
+                            href={hotel.booking_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-auto inline-flex items-center justify-center gap-1 w-full px-2 py-2 rounded-lg text-xs"
+                            style={{
+                              background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
+                              color: "#fff",
+                              fontFamily: "system-ui, sans-serif",
+                              fontWeight: 600,
+                              textDecoration: "none",
+                            }}
+                          >
+                            Booking.com
+                            <ExternalLink size={10} />
+                          </a>
+                        </div>
+                      ))}
+                    </HorizontalCardRow>
+                  </>
+                )}
+              </CollapsiblePanel>
+            )}
+          </div>
+        )}
+
+        <h2
+          className="mb-6"
+          style={{ fontFamily: "'DM Serif Display', serif", color: theme.heading, fontSize: "1.35rem" }}
+        >
+          Day-by-day itinerary
+        </h2>
+
+        <div className="space-y-3">
           {trip.itinerary.map((dayPlan) => {
             const dayActivityNames = dayPlan.activities.map((a) => a.name);
             const dayGoogleRoute = googleMapsDayRouteUrl(dayActivityNames, trip.destination);
             const routeTruncated = dayRouteExceedsWaypointLimit(dayActivityNames.length);
 
             return (
-            <div
-              key={dayPlan.day}
-              className="rounded-2xl p-4 md:p-5"
-              style={{
-                background: theme.isDark ? "rgba(255,255,255,0.03)" : theme.sectionAlt,
-                border: `1px solid ${theme.border}`,
-                boxShadow: theme.cardShadow,
-              }}
-            >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-5">
-                <div className="flex items-center gap-3 min-w-0">
+              <CollapsiblePanel
+                key={dayPlan.day}
+                defaultOpen={dayPlan.day === 1}
+                icon={(
                   <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0"
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold"
                     style={{ background: theme.dayHeaderBg, color: "#fff", fontFamily: "'DM Serif Display', serif" }}
                   >
                     {dayPlan.day}
                   </div>
-                  <div className="min-w-0">
-                    <h2 style={{ fontFamily: "'DM Serif Display', serif", color: theme.heading, fontSize: "1.25rem", lineHeight: 1.2 }}>
-                      Day {dayPlan.day}
-                    </h2>
-                    <p style={{ color: theme.accentSky, fontSize: "0.78rem", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
-                      {dayPlan.theme}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
-                  {dayGoogleRoute && (
-                    <a
-                      href={dayGoogleRoute}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl transition-opacity hover:opacity-90 min-h-[44px]"
-                      style={{
-                        background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
-                        color: "#fff",
-                        fontFamily: "system-ui, sans-serif",
-                        fontSize: "0.78rem",
-                        fontWeight: 600,
-                        textDecoration: "none",
-                        minHeight: 36,
-                      }}
-                      title={routeTruncated ? "First 11 stops only — Google Maps waypoint limit" : "Driving route through today's activities in order"}
-                    >
-                      <Route size={14} strokeWidth={2} />
-                      Day route
-                      <ExternalLink size={11} strokeWidth={2} className="opacity-85" />
-                    </a>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => toggleSave(dayPlan.day)}
-                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl cursor-pointer transition-all min-h-[44px]"
-                    style={{
-                      background: savedDays.includes(dayPlan.day) ? theme.optionBgSelected : theme.optionBg,
-                      border: `1px solid ${savedDays.includes(dayPlan.day) ? theme.accentSky : theme.border}`,
-                      color: savedDays.includes(dayPlan.day) ? theme.accentSky : theme.muted,
-                      fontFamily: "system-ui, sans-serif",
-                      fontSize: "0.78rem",
-                      fontWeight: 500,
-                      minHeight: 36,
-                    }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill={savedDays.includes(dayPlan.day) ? theme.accentSky : "none"}>
-                      <path d="M6 1l1.5 3 3.5.5-2.5 2.5.5 3.5L6 9l-3 1.5.5-3.5L1 4.5 4.5 4 6 1z" stroke={theme.accentSky} strokeWidth="1" strokeLinejoin="round" />
-                    </svg>
-                    {savedDays.includes(dayPlan.day) ? "Saved" : "Save Day"}
-                  </button>
-                </div>
-              </div>
-              {routeTruncated && (
-                <p className="mb-4 -mt-2 text-xs" style={{ color: theme.faint, fontFamily: "system-ui, sans-serif" }}>
-                  Day route includes the first 11 stops — Google Maps limits multi-stop URLs.
-                </p>
-              )}
-
-              <div className="flex flex-col gap-4 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4">
-                {dayPlan.activities.map((activity, aIdx) => {
-                  const typeStyle = getActivityTypeStyle(activity.type);
-                  const TypeIcon = typeStyle.icon;
-                  const dayColor = dayPinColor(dayPlan.day);
-                  const googleMapsUrl = googleMapsSearchUrl(activity.name, trip.destination);
-                  const previousActivity = aIdx > 0 ? dayPlan.activities[aIdx - 1] : null;
-                  const legGoogleUrl = previousActivity
-                    ? googleMapsLegUrl(previousActivity.name, activity.name, trip.destination)
-                    : null;
-
-                  return (
-                  <motion.div
-                    key={`${dayPlan.day}-${activity.time_slot}-${activity.name}`}
-                    initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: aIdx * 0.08 }}
-                    className="rounded-2xl overflow-hidden w-full flex flex-col"
-                    style={{
-                      background: theme.activityCardBg,
-                      border: `1px solid ${theme.activityCardBorder}`,
-                      borderTop: `3px solid ${dayColor}`,
-                      minHeight: "260px",
-                      boxShadow: theme.cardShadow,
-                      transition: "border-color 0.2s, box-shadow 0.2s",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = theme.activityCardHoverBorder;
-                      e.currentTarget.style.boxShadow = `0 4px 20px ${theme.accentSky}18`;
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = theme.activityCardBorder;
-                      e.currentTarget.style.boxShadow = theme.cardShadow;
-                    }}
-                  >
-                    <div
-                      className="flex items-center justify-between px-4 py-3"
-                      style={{ background: typeStyle.gradient }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <TypeIcon size={16} color="#fff" strokeWidth={2} />
-                        <span style={{ color: "#fff", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", fontWeight: 500 }}>
-                          {activity.type}
-                        </span>
-                      </div>
-                      <span style={{ color: "rgba(255,255,255,0.9)", fontSize: "0.7rem", fontFamily: "system-ui, sans-serif" }}>
-                        {activity.duration}
-                      </span>
-                    </div>
-                    <div className="p-4 flex flex-col flex-1 min-h-0">
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <h3 style={{ fontFamily: "'DM Serif Display', serif", color: theme.activityHeading, fontSize: "1.02rem", lineHeight: 1.25 }}>{activity.name}</h3>
-                        <span
-                          className="px-2 py-0.5 rounded-md flex-shrink-0"
-                          style={{
-                            color: theme.accentSky,
-                            background: theme.isDark ? "rgba(88,171,212,0.12)" : "rgba(30,75,136,0.08)",
-                            fontSize: "0.7rem",
-                            fontFamily: "system-ui, sans-serif",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {activity.time}
-                        </span>
-                      </div>
-                      <p className="flex-1 mb-3" style={{ color: theme.activityBody, fontSize: "0.8rem", lineHeight: "1.55", fontFamily: "system-ui, sans-serif" }}>
-                        {activity.desc}
-                      </p>
-                      <div className="mt-auto flex flex-col gap-2">
-                        {legGoogleUrl && (
-                          <a
-                            href={legGoogleUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center justify-center gap-1.5 w-full px-3 py-2.5 rounded-xl transition-opacity hover:opacity-90 min-h-[44px]"
-                            style={{
-                              background: theme.isDark ? "rgba(88,171,212,0.1)" : "rgba(88,171,212,0.12)",
-                              border: `1px solid ${theme.accentSky}44`,
-                              color: theme.accentSky,
-                              fontSize: "0.74rem",
-                              fontFamily: "system-ui, sans-serif",
-                              fontWeight: 500,
-                              textDecoration: "none",
-                            }}
-                          >
-                            <Route size={13} strokeWidth={2} />
-                            Route from previous stop
-                          </a>
-                        )}
-                        <a
-                          href={googleMapsUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center gap-1.5 w-full px-3 py-2.5 rounded-xl transition-opacity hover:opacity-90 min-h-[44px]"
-                          style={{
-                            background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
-                            color: "#fff",
-                            fontSize: "0.78rem",
-                            fontFamily: "system-ui, sans-serif",
-                            fontWeight: 600,
-                            textDecoration: "none",
-                          }}
-                        >
-                          <MapPin size={14} strokeWidth={2} className="flex-shrink-0" />
-                          Open in Maps
-                          <ExternalLink size={11} strokeWidth={2} className="flex-shrink-0 opacity-85" />
-                        </a>
-                      </div>
-                    </div>
-                  </motion.div>
-                  );
-                })}
-              </div>
-            </div>
+                )}
+                title={`Day ${dayPlan.day}`}
+                summary={daySummary(dayPlan)}
+                externalUrl={dayGoogleRoute}
+                externalLabel={routeTruncated ? "Day route (first 11 stops)" : "Day route in Google Maps"}
+              >
+                {routeTruncated && (
+                  <p className="mb-3 text-xs" style={{ color: theme.faint, fontFamily: "system-ui, sans-serif" }}>
+                    Route includes the first 11 stops — Google Maps waypoint limit.
+                  </p>
+                )}
+                <HorizontalCardRow>
+                  {dayPlan.activities.map((activity, aIdx) => (
+                    <DayActivityCard
+                      key={`${dayPlan.day}-${activity.time_slot}-${activity.name}`}
+                      activity={activity}
+                      dayNumber={dayPlan.day}
+                      destination={trip.destination}
+                      previousActivity={aIdx > 0 ? dayPlan.activities[aIdx - 1] : null}
+                      theme={theme}
+                    />
+                  ))}
+                </HorizontalCardRow>
+              </CollapsiblePanel>
             );
           })}
         </div>
 
-        <div className="mt-10 pt-8" style={{ borderTop: `1px solid ${theme.border}` }}>
-          <button
-            type="button"
-            onClick={onHome}
-            className="w-full px-6 py-3.5 rounded-xl cursor-pointer transition-all min-h-[48px]"
-            style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body, fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}
-            onMouseEnter={(e) => (e.currentTarget.style.borderColor = theme.accentMid)}
-            onMouseLeave={(e) => (e.currentTarget.style.borderColor = theme.border)}
-          >
-            ← Home
-          </button>
-        </div>
       </div>
 
       {!isChatOpen && (

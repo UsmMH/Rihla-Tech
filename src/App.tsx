@@ -39,7 +39,10 @@ function AppRoutes() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: "#F4F8FC", color: "#4E7090", fontFamily: "system-ui, sans-serif" }}
+      >
         Loading...
       </div>
     );

@@ -135,8 +135,8 @@ export default function QuestionFlow({
     <div style={{ background: theme.pageBg, minHeight: "100svh", transition: "background 0.3s" }}>
       <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
 
-      <div className="flex flex-col items-center justify-start px-4" style={{ paddingTop: "72px", minHeight: "100svh", paddingBottom: "calc(6.5rem + env(safe-area-inset-bottom, 0px))" }}>
-        <div className="w-full max-w-xl pt-4 md:pt-6">
+      <div className="flex flex-col items-center justify-start px-4" style={{ paddingTop: "72px", minHeight: "100svh" }}>
+        <div className="w-full max-w-xl pt-4 md:pt-6 pb-8">
           <div className="flex items-center justify-between mb-2">
             <span style={{ color: theme.muted, fontSize: "0.78rem", fontFamily: "system-ui, sans-serif" }}>
               {stepLabel} · Step {currentStep + 1} of {visibleQuestions.length}
@@ -270,19 +270,22 @@ export default function QuestionFlow({
             </motion.div>
           </AnimatePresence>
 
+          <div className="h-24 md:h-0" aria-hidden="true" />
+
           <div
-            className="fixed bottom-0 left-0 right-0 z-40 px-4 pt-3 md:relative md:mt-6 md:px-0 md:pt-0"
+            className="fixed bottom-0 left-0 right-0 z-40 px-4 pt-3 border-t md:relative md:mt-6 md:px-0 md:pt-0 md:border-t-0"
             style={{
               paddingBottom: "max(1rem, env(safe-area-inset-bottom, 1rem))",
-              background: `linear-gradient(to top, ${theme.pageBg}ee 75%, transparent)`,
+              background: theme.pageBg,
+              borderColor: theme.border,
             }}
           >
-            <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
+            <div className="max-w-xl mx-auto flex items-center gap-3">
             <button
               type="button"
               onClick={handleBack}
               disabled={submitting}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all cursor-pointer flex-shrink-0 min-h-[48px] min-w-[48px]"
+              className="flex items-center justify-center gap-2 px-4 rounded-xl transition-all cursor-pointer flex-shrink-0 h-12 w-[88px]"
               style={{
                 background: theme.optionBg,
                 border: `1px solid ${theme.border}`,
@@ -298,13 +301,11 @@ export default function QuestionFlow({
               Back
             </button>
 
-            <motion.button
+            <button
               type="button"
-              whileHover={canProceed && !submitting ? { scale: 1.02 } : {}}
-              whileTap={canProceed && !submitting ? { scale: 0.98 } : {}}
               onClick={handleNext}
               disabled={!canProceed || submitting}
-              className="flex items-center justify-center gap-2 flex-1 py-3.5 rounded-xl font-medium transition-all min-h-[48px]"
+              className="flex items-center justify-center gap-2 flex-1 rounded-xl font-medium transition-all h-12"
               style={{
                 background: canProceed && !submitting ? `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})` : theme.progressTrack,
                 border: `1px solid ${canProceed && !submitting ? theme.border : theme.borderFaint}`,
@@ -320,11 +321,11 @@ export default function QuestionFlow({
                   <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               )}
-            </motion.button>
+            </button>
             </div>
           </div>
 
-          <div className="flex items-center justify-center gap-2 mt-5 md:mt-5">
+          <div className="flex items-center justify-center gap-2 mt-5">
             {visibleQuestions.map((q, i) => (
               <div
                 key={q.id}

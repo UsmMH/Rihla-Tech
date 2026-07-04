@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 
 from app.database import check_database_connection
-from app.schemas.health import HealthResponse, LlmStatusResponse, MapboxStatusResponse
+from app.schemas.health import DuffelStatusResponse, HealthResponse, LlmStatusResponse, MapboxStatusResponse
+from app.services.flights import duffel_configured
 from app.services.geocoding import mapbox_configured
 from app.services.llm import get_llm_model, get_llm_provider, llm_configured
 
@@ -29,3 +30,8 @@ def llm_status() -> LlmStatusResponse:
 @router.get("/health/mapbox", response_model=MapboxStatusResponse)
 def mapbox_status() -> MapboxStatusResponse:
     return MapboxStatusResponse(configured=mapbox_configured())
+
+
+@router.get("/health/duffel", response_model=DuffelStatusResponse)
+def duffel_status() -> DuffelStatusResponse:
+    return DuffelStatusResponse(configured=duffel_configured())

@@ -147,7 +147,7 @@ function TripPlanner() {
       {page === "result" && tripPlanId !== null && (
         <TripResult
           tripPlanId={tripPlanId}
-          onHome={goToAppHome}
+          onBack={() => setPage("my-trips")}
           onNavigate={handleNavigate}
         />
       )}

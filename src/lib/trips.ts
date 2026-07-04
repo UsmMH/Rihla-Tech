@@ -108,6 +108,57 @@ export interface SuggestDestinationsResult {
   fallback_reason: string | null;
 }
 
+export interface FlightSegment {
+  origin: string;
+  origin_code: string;
+  destination: string;
+  destination_code: string;
+  departure_at: string | null;
+  arrival_at: string | null;
+  duration: string | null;
+  airline: string;
+  stops: number;
+}
+
+export interface FlightOffer {
+  id: string;
+  airline: string;
+  price: string;
+  price_amount: number | null;
+  currency: string;
+  outbound: FlightSegment;
+  inbound: FlightSegment | null;
+  booking_url: string | null;
+}
+
+export interface FlightsResult {
+  offers: FlightOffer[];
+  search_url: string;
+  source: string;
+  fallback_reason: string | null;
+  origin_code: string | null;
+  destination_code: string | null;
+}
+
+export interface HotelOption {
+  id: string;
+  name: string;
+  area: string;
+  stars: number;
+  price_per_night: string;
+  price_tier: string;
+  amenities: string[];
+  booking_url: string;
+}
+
+export interface HotelsResult {
+  hotels: HotelOption[];
+  search_url: string;
+  source: string;
+  check_in: string | null;
+  check_out: string | null;
+}
+
 function normalizeTripDetail(raw: TripDetail): TripDetail {
   return {
     ...raw,
@@ -158,6 +209,14 @@ export async function generateTrip(tripPlanId: number): Promise<TripDetail> {
 export async function getTrip(tripPlanId: number): Promise<TripDetail> {
   const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}`);
   return normalizeTripDetail(result);
+}
+
+export async function getTripFlights(tripPlanId: number): Promise<FlightsResult> {
+  return apiFetch<FlightsResult>(`/trips/${tripPlanId}/flights`);
+}
+
+export async function getTripHotels(tripPlanId: number): Promise<HotelsResult> {
+  return apiFetch<HotelsResult>(`/trips/${tripPlanId}/hotels`);
 }
 
 export async function enrichTripPlaces(tripPlanId: number): Promise<TripDetail> {

@@ -1,4 +1,4 @@
-import { Home, Map, Users, User } from "lucide-react";
+import { Home, Map, Users } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import type { AppTab } from "@/lib/navigation";
 
@@ -11,7 +11,6 @@ const TABS: { id: AppTab; label: string; Icon: typeof Home }[] = [
   { id: "home", label: "Home", Icon: Home },
   { id: "my-trips", label: "My Trips", Icon: Map },
   { id: "community", label: "Community", Icon: Users },
-  { id: "profile", label: "Profile", Icon: User },
 ];
 
 export default function AppBottomNav({ active, onNavigate }: AppBottomNavProps) {

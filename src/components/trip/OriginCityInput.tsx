@@ -21,12 +21,21 @@ export default function OriginCityInput({
   const [suggestions, setSuggestions] = useState<PlaceSearchResult[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
 
   useEffect(() => {
     setQuery(value);
+    setConfirmed(false);
   }, [value]);
 
   useEffect(() => {
+    if (confirmed && query.trim() === value.trim()) {
+      setSuggestions([]);
+      setOpen(false);
+      setLoading(false);
+      return;
+    }
+
     if (query.trim().length < 2) {
       setSuggestions([]);
       setOpen(false);
@@ -48,13 +57,15 @@ export default function OriginCityInput({
     }, 300);
 
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [query, value, confirmed]);
 
   function handleSelect(item: PlaceSearchResult) {
+    setConfirmed(true);
     setQuery(item.label);
     onChange(item.label);
     setOpen(false);
     setSuggestions([]);
+    setLoading(false);
   }
 
   const showSuggestions = open && suggestions.length > 0;
@@ -65,11 +76,16 @@ export default function OriginCityInput({
         type="text"
         value={query}
         onChange={(e) => {
+          setConfirmed(false);
           setQuery(e.target.value);
           onChange(e.target.value);
-          setOpen(true);
+          if (e.target.value.trim().length >= 2) {
+            setOpen(true);
+          }
         }}
-        onFocus={() => suggestions.length > 0 && setOpen(true)}
+        onFocus={() => {
+          if (!confirmed && suggestions.length > 0) setOpen(true);
+        }}
         onBlur={() => window.setTimeout(() => setOpen(false), 180)}
         placeholder={placeholder ?? "Search your departure city..."}
         className="w-full rounded-xl px-4 py-3 outline-none"
@@ -133,7 +149,7 @@ export default function OriginCityInput({
         </div>
       )}
 
-      {!loading && query.trim().length >= 2 && suggestions.length === 0 && open && (
+      {!loading && query.trim().length >= 2 && suggestions.length === 0 && open && !confirmed && (
         <p className="mt-2 text-xs" style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}>
           No matches — you can still type your city manually.
         </p>

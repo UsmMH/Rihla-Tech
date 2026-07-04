@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Calendar, MapPin, ChevronRight, Trash2 } from "lucide-react";
 import AppBottomNav from "@/components/layout/AppBottomNav";
-import Footer from "@/components/layout/Footer";
 import Navbar from "@/components/layout/Navbar";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
@@ -26,8 +25,8 @@ function formatDateRange(start: string | null, end: string | null): string {
   return `${startStr} – ${endStr}`;
 }
 
-function statusLabel(trip: TripListItem): string {
-  if (trip.has_itinerary) return "Itinerary ready";
+function statusLabel(trip: TripListItem): string | null {
+  if (trip.has_itinerary) return null;
   if (trip.destination) return "Ready to generate";
   return "In progress";
 }
@@ -38,6 +37,7 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onNavigat
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
 
   useEffect(() => {
     listTrips()
@@ -48,16 +48,20 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onNavigat
       .finally(() => setLoading(false));
   }, []);
 
-  async function handleDelete(e: React.MouseEvent, tripId: number, label: string) {
-    e.stopPropagation();
+  function requestDelete(tripId: number, label: string) {
     if (deletingId !== null) return;
-    if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
+    setDeleteTarget({ id: tripId, label });
+  }
 
-    setDeletingId(tripId);
+  async function confirmDelete() {
+    if (!deleteTarget || deletingId !== null) return;
+    const { id } = deleteTarget;
+    setDeleteTarget(null);
+    setDeletingId(id);
     try {
-      await deleteTrip(tripId);
-      setTrips((prev) => prev.filter((t) => t.id !== tripId));
-      onTripDeleted?.(tripId);
+      await deleteTrip(id);
+      setTrips((prev) => prev.filter((t) => t.id !== id));
+      onTripDeleted?.(id);
     } catch (err: unknown) {
       setError(err instanceof ApiError ? err.message : "Failed to delete trip");
     } finally {
@@ -198,17 +202,22 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onNavigat
                         <Calendar size={12} />
                         {formatDateRange(trip.start_date, trip.end_date)}
                       </span>
-                      <span
-                        className="px-2 py-0.5 rounded-full"
-                        style={{
-                          background: trip.has_itinerary ? "rgba(76,175,80,0.15)" : theme.badgeBg,
-                          color: trip.has_itinerary ? "#4CAF50" : theme.badgeText,
-                          fontSize: "0.7rem",
-                          fontFamily: "system-ui, sans-serif",
-                        }}
-                      >
-                        {statusLabel(trip)}
-                      </span>
+                      {(() => {
+                        const status = statusLabel(trip);
+                        return status ? (
+                        <span
+                          className="px-2 py-0.5 rounded-full"
+                          style={{
+                            background: theme.badgeBg,
+                            color: theme.badgeText,
+                            fontSize: "0.7rem",
+                            fontFamily: "system-ui, sans-serif",
+                          }}
+                        >
+                          {status}
+                        </span>
+                        ) : null;
+                      })()}
                     </div>
                   </div>
                   <ChevronRight size={18} color={theme.muted} className="flex-shrink-0" />
@@ -217,7 +226,10 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onNavigat
                   type="button"
                   aria-label={`Delete ${trip.destination ?? "trip"}`}
                   disabled={deletingId === trip.id}
-                  onClick={(e) => void handleDelete(e, trip.id, trip.destination ?? "this trip")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    requestDelete(trip.id, trip.destination ?? "this trip");
+                  }}
                   className="w-11 h-11 rounded-xl flex items-center justify-center cursor-pointer flex-shrink-0 transition-colors min-w-[44px]"
                   style={{
                     background: theme.optionBg,
@@ -241,7 +253,50 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onNavigat
 
       <AppBottomNav active="my-trips" onNavigate={onNavigate} />
 
-      <Footer />
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center px-4"
+          style={{ background: "rgba(0, 0, 0, 0.55)" }}
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-trip-title"
+            className="w-full max-w-sm rounded-2xl p-5"
+            style={{ background: theme.activityCardBg, border: `1px solid ${theme.border}`, boxShadow: theme.cardShadow }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="delete-trip-title"
+              style={{ fontFamily: "'DM Serif Display', serif", color: theme.heading, fontSize: "1.2rem", marginBottom: "0.5rem" }}
+            >
+              Delete trip?
+            </h2>
+            <p style={{ color: theme.body, fontFamily: "system-ui, sans-serif", fontSize: "0.9rem", marginBottom: "1.25rem" }}>
+              Delete &ldquo;{deleteTarget.label}&rdquo;? This cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="flex-1 py-2.5 rounded-xl cursor-pointer min-h-[44px]"
+                style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body, fontFamily: "system-ui, sans-serif" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDelete()}
+                className="flex-1 py-2.5 rounded-xl cursor-pointer min-h-[44px]"
+                style={{ background: "#c62828", border: "none", color: "#fff", fontFamily: "system-ui, sans-serif", fontWeight: 600 }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
