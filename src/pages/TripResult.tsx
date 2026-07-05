@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Building2, ChevronDown, ChevronLeft, ExternalLink, MapPin, Plane, Route, Share2, X } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
@@ -12,7 +12,7 @@ import {
   googleMapsSearchUrl,
 } from "@/lib/mapDirections";
 import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
-import { generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
+import { enrichTripPlaces, generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
 import { shareTrip, unshareTrip } from "@/lib/community";
 import type { AppTab } from "@/lib/navigation";
 
@@ -314,6 +314,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   const [shareOpen, setShareOpen] = useState(false);
   const [shareCaption, setShareCaption] = useState("");
   const [shareBusy, setShareBusy] = useState(false);
+  const enrichStarted = useRef(false);
 
   const loadItinerary = useCallback(async () => {
     setLoading(true);
@@ -338,6 +339,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   }, [tripPlanId]);
 
   useEffect(() => {
+    enrichStarted.current = false;
     saveLastTripId(tripPlanId);
     loadItinerary();
   }, [loadItinerary, tripPlanId]);
@@ -364,6 +366,17 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
     } else {
       setHotels(null);
     }
+  }, [trip, tripPlanId]);
+
+  useEffect(() => {
+    if (!trip?.geocoding_configured || enrichStarted.current) return;
+    const activityCount = trip.itinerary.reduce((sum, day) => sum + day.activities.length, 0);
+    if (activityCount === 0 || trip.places_geocoded >= activityCount) return;
+
+    enrichStarted.current = true;
+    enrichTripPlaces(tripPlanId)
+      .then(setTrip)
+      .catch(() => {});
   }, [trip, tripPlanId]);
 
   async function handleShare() {

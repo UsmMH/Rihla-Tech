@@ -501,11 +501,6 @@ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTr
     db.refresh(trip)
     places = list(trip.places)
 
-    if mapbox_configured():
-        enrich_trip_places(db, trip, places, force=True)
-        db.refresh(trip)
-        places = list(trip.places)
-
     return GenerateTripResponse(
         **_build_response(trip, places, source, fallback_reason, tags_override).model_dump()
     )

@@ -8,6 +8,7 @@ from app.models.question import Question
 from app.models.trip_plan import QuizResponse, TripPlan
 from app.models.user import User
 from app.schemas.quiz import QuizAnswerItem, QuizSubmitResponse, TripPlanPublic
+from app.services.quiz_validation import validate_quiz_submission
 
 
 def get_questions_by_phase(db: Session, phase: str) -> list[Question]:
@@ -118,6 +119,9 @@ def submit_quiz_answers(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Question {item.question_id} is not valid for phase '{phase}'",
             )
+
+    answers_by_id = {item.question_id: item.value for item in answers}
+    validate_quiz_submission(phase, question_map, answers_by_id)
 
     if trip_plan_id is not None:
         trip = db.get(TripPlan, trip_plan_id)

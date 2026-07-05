@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import Navbar from "@/components/layout/Navbar";
-import OriginCityInput from "@/components/trip/OriginCityInput";
+import OriginCityInput, { type CityInputMeta } from "@/components/trip/OriginCityInput";
 import TripDateRangePicker from "@/components/trip/TripDateRangePicker";
 import TripTravelersInput from "@/components/trip/TripTravelersInput";
 import { useTheme } from "@/contexts/ThemeContext";
 import type { AppTab } from "@/lib/navigation";
 import type { AnswerValue, QuizQuestion } from "@/lib/quiz";
+import { validateCrossFields, isQuestionStepReady, validateQuestionStep } from "@/lib/quizValidation";
 
 type QuestionFlowProps = {
   questions: QuizQuestion[];
@@ -19,26 +20,12 @@ type QuestionFlowProps = {
   submitting?: boolean;
 };
 
-function isStepComplete(question: QuizQuestion, value: AnswerValue | undefined): boolean {
-  if (value === undefined) return false;
-
-  switch (question.question_type) {
-    case "choice":
-      if (question.multi) return Array.isArray(value) && value.length > 0;
-      return typeof value === "string" && value.length > 0;
-    case "text":
-      return typeof value === "string" && value.trim().length > 0;
-    case "date_range": {
-      const dates = value as { start: string; end: string };
-      return Boolean(dates.start && dates.end && dates.end >= dates.start);
-    }
-    case "travelers": {
-      const t = value as { adults: number; children: number };
-      return t.adults >= 1 && t.children >= 0;
-    }
-    default:
-      return false;
-  }
+function stepValidationError(
+  question: QuizQuestion,
+  value: AnswerValue | undefined,
+  cityMeta?: CityInputMeta,
+): string | null {
+  return validateQuestionStep(question, value, cityMeta);
 }
 
 export default function QuestionFlow({
@@ -53,7 +40,9 @@ export default function QuestionFlow({
   const { theme } = useTheme();
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<number, AnswerValue>>({});
+  const [cityMetaByQuestion, setCityMetaByQuestion] = useState<Record<number, CityInputMeta>>({});
   const [direction, setDirection] = useState(1);
+  const [stepError, setStepError] = useState<string | null>(null);
 
   const visibleQuestions = useMemo(() => {
     const destinationKnown = questions
@@ -71,9 +60,21 @@ export default function QuestionFlow({
 
   const step = visibleQuestions[currentStep];
   const selected = step ? answers[step.id] : undefined;
+  const cityMeta = step ? cityMetaByQuestion[step.id] : undefined;
   const progress = visibleQuestions.length ? ((currentStep + 1) / visibleQuestions.length) * 100 : 0;
-  const canProceed = step ? isStepComplete(step, selected) : false;
+  const currentError = step ? stepValidationError(step, selected, cityMeta) : null;
+  const canProceed = step ? isQuestionStepReady(step, selected, cityMeta) : false;
   const isLastStep = currentStep === visibleQuestions.length - 1;
+
+  const dateValue =
+    step?.question_type === "date_range"
+      ? (selected as { start: string; end: string } | undefined)
+      : undefined;
+  const showDateError = Boolean(dateValue?.start && dateValue?.end && currentError);
+
+  useEffect(() => {
+    setStepError(null);
+  }, [currentStep, step?.id]);
 
   useEffect(() => {
     if (!step || step.question_type !== "travelers") return;
@@ -99,7 +100,24 @@ export default function QuestionFlow({
   }
 
   function handleNext() {
-    if (!canProceed || submitting) return;
+    if (submitting || !step) return;
+
+    const error = stepValidationError(step, selected, cityMeta);
+    if (error) {
+      setStepError(error);
+      return;
+    }
+
+    if (isLastStep) {
+      const crossError = validateCrossFields(questions, answers);
+      if (crossError) {
+        setStepError(crossError);
+        return;
+      }
+    }
+
+    setStepError(null);
+
     if (currentStep < visibleQuestions.length - 1) {
       setDirection(1);
       setCurrentStep((s) => s + 1);
@@ -132,11 +150,11 @@ export default function QuestionFlow({
     : [];
 
   return (
-    <div style={{ background: theme.pageBg, minHeight: "100svh", transition: "background 0.3s" }}>
+    <div className="min-h-svh flex flex-col" style={{ background: theme.pageBg, transition: "background 0.3s" }}>
       <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
 
-      <div className="flex flex-col items-center justify-start px-4" style={{ paddingTop: "72px", minHeight: "100svh" }}>
-        <div className="w-full max-w-xl pt-4 md:pt-6 pb-8">
+      <div className="flex-1 overflow-y-auto px-4 pt-[72px]">
+        <div className="w-full max-w-xl mx-auto py-4 md:py-6">
           <div className="flex items-center justify-between mb-2">
             <span style={{ color: theme.muted, fontSize: "0.78rem", fontFamily: "system-ui, sans-serif" }}>
               {stepLabel} · Step {currentStep + 1} of {visibleQuestions.length}
@@ -225,8 +243,13 @@ export default function QuestionFlow({
 
               {step.question_type === "text" && (step.key === "origin" || step.key === "destination") && (
                 <OriginCityInput
+                  key={step.id}
                   value={(selected as string) ?? ""}
                   onChange={setAnswer}
+                  showValidation={Boolean(stepError)}
+                  onMetaChange={(meta) => {
+                    setCityMetaByQuestion((prev) => ({ ...prev, [step.id]: meta }));
+                  }}
                   placeholder={
                     step.key === "origin"
                       ? "Search your departure city..."
@@ -255,77 +278,50 @@ export default function QuestionFlow({
               )}
 
               {step.question_type === "date_range" && (
-                <TripDateRangePicker
-                  value={(selected as { start: string; end: string } | undefined) ?? { start: "", end: "" }}
-                  onChange={setAnswer}
-                />
+                <>
+                  <TripDateRangePicker
+                    value={dateValue ?? { start: "", end: "" }}
+                    onChange={setAnswer}
+                  />
+                  {showDateError && (
+                    <p className="mt-3 text-xs" style={{ color: "#ef4444", fontFamily: "system-ui, sans-serif" }}>
+                      {currentError}
+                    </p>
+                  )}
+                </>
               )}
 
               {step.question_type === "travelers" && (
-                <TripTravelersInput
-                  value={(selected as { adults: number; children: number } | undefined) ?? { adults: 1, children: 0 }}
-                  onChange={setAnswer}
-                />
+                <>
+                  <TripTravelersInput
+                    value={(selected as { adults: number; children: number } | undefined) ?? { adults: 1, children: 0 }}
+                    onChange={setAnswer}
+                  />
+                  {currentError && (
+                    <p className="mt-3 text-xs" style={{ color: "#ef4444", fontFamily: "system-ui, sans-serif" }}>
+                      {currentError}
+                    </p>
+                  )}
+                </>
               )}
             </motion.div>
           </AnimatePresence>
 
-          <div className="h-24 md:h-0" aria-hidden="true" />
-
-          <div
-            className="fixed bottom-0 left-0 right-0 z-40 px-4 pt-3 border-t md:relative md:mt-6 md:px-0 md:pt-0 md:border-t-0"
-            style={{
-              paddingBottom: "max(1rem, env(safe-area-inset-bottom, 1rem))",
-              background: theme.pageBg,
-              borderColor: theme.border,
-            }}
-          >
-            <div className="max-w-xl mx-auto flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleBack}
-              disabled={submitting}
-              className="flex items-center justify-center gap-2 px-4 rounded-xl transition-all cursor-pointer flex-shrink-0 h-12 w-[88px]"
+          {stepError && (
+            <p
+              className="mt-3 rounded-xl px-4 py-3 text-sm"
               style={{
-                background: theme.optionBg,
-                border: `1px solid ${theme.border}`,
+                background: "rgba(239, 68, 68, 0.1)",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
                 color: theme.body,
                 fontFamily: "system-ui, sans-serif",
-                fontSize: "0.9rem",
-                opacity: submitting ? 0.6 : 1,
               }}
             >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M10 4l-4 4 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Back
-            </button>
+              {stepError}
+            </p>
+          )}
 
-            <button
-              type="button"
-              onClick={handleNext}
-              disabled={!canProceed || submitting}
-              className="flex items-center justify-center gap-2 flex-1 rounded-xl font-medium transition-all h-12"
-              style={{
-                background: canProceed && !submitting ? `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})` : theme.progressTrack,
-                border: `1px solid ${canProceed && !submitting ? theme.border : theme.borderFaint}`,
-                color: canProceed && !submitting ? "#FFFFFF" : theme.faint,
-                cursor: canProceed && !submitting ? "pointer" : "not-allowed",
-                fontFamily: "system-ui, sans-serif",
-                fontSize: "0.95rem",
-              }}
-            >
-              {submitting ? "Saving..." : isLastStep ? finalButtonLabel : "Next Step"}
-              {!submitting && (
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-            </button>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-center gap-2 mt-5">
+          <div className="flex items-center justify-center gap-2 mt-5 mb-2">
             {visibleQuestions.map((q, i) => (
               <div
                 key={q.id}
@@ -338,6 +334,59 @@ export default function QuestionFlow({
               />
             ))}
           </div>
+        </div>
+      </div>
+
+      <div
+        className="flex-shrink-0 px-4 pt-3 border-t"
+        style={{
+          paddingBottom: "max(1rem, env(safe-area-inset-bottom, 1rem))",
+          background: theme.pageBg,
+          borderColor: theme.border,
+        }}
+      >
+        <div className="max-w-xl mx-auto flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleBack}
+            disabled={submitting}
+            className="flex items-center justify-center gap-2 px-4 rounded-xl transition-all cursor-pointer flex-shrink-0 h-12 w-[88px]"
+            style={{
+              background: theme.optionBg,
+              border: `1px solid ${theme.border}`,
+              color: theme.body,
+              fontFamily: "system-ui, sans-serif",
+              fontSize: "0.9rem",
+              opacity: submitting ? 0.6 : 1,
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M10 4l-4 4 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Back
+          </button>
+
+          <button
+            type="button"
+            onClick={handleNext}
+            disabled={!canProceed || submitting}
+            className="flex items-center justify-center gap-2 flex-1 rounded-xl font-medium transition-all h-12"
+            style={{
+              background: canProceed && !submitting ? `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})` : theme.progressTrack,
+              border: `1px solid ${canProceed && !submitting ? theme.border : theme.borderFaint}`,
+              color: canProceed && !submitting ? "#FFFFFF" : theme.faint,
+              cursor: canProceed && !submitting ? "pointer" : "not-allowed",
+              fontFamily: "system-ui, sans-serif",
+              fontSize: "0.95rem",
+            }}
+          >
+            {submitting ? "Saving..." : isLastStep ? finalButtonLabel : "Next Step"}
+            {!submitting && (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
         </div>
       </div>
     </div>

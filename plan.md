@@ -1,7 +1,7 @@
 # RihlaTech — Development Plan & Handoff
 
 > **Purpose:** Continue development in a new chat without losing context.  
-> **Last updated:** July 2026 · **Phases 0–7 committed & pushed** · **Next: Phase 8 (Admin + deploy)**
+> **Last updated:** July 2026 · **Phases 0–7b committed & pushed** · **Next: Phase 8 (Admin + deploy)**
 
 ---
 
@@ -95,6 +95,7 @@ Rihla-Tech/
 │   │   ├── llm.py, itinerary.py, destinations.py, geocoding.py
 │   │   ├── flights.py, hotels.py          # Phase 6
 │   │   ├── community.py                   # Phase 7
+│   │   ├── quiz_validation.py             # Quiz input validation
 │   │   ├── edit.py, apply_edit.py, chat.py, consult_chat.py
 │   └── schemas/trip.py, community.py
 ├── src/
@@ -102,8 +103,8 @@ Rihla-Tech/
 │   ├── components/
 │   │   ├── layout/       Navbar, AppBottomNav
 │   │   ├── auth/         AuthLayout (light mode)
-│   │   └── trip/         ChatbotSidebar, QuestionFlow, OriginCityInput
-│   └── lib/trips.ts, community.ts, places.ts, mapDirections.ts
+│   │   └── trip/         QuestionFlow, OriginCityInput, ChatbotSidebar
+│   └── lib/trips.ts, community.ts, quizValidation.ts, places.ts, mapDirections.ts
 ├── plan.md
 └── README.md
 ```
@@ -153,7 +154,7 @@ App nav (desktop): Home · My Trips · Community · Profile
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/quiz/questions?phase=quiz\|preferences` | Questions + options |
-| POST | `/api/quiz/submit` | Save answers; returns `needs_destination_suggestion` |
+| POST | `/api/quiz/submit` | Save answers; returns `needs_destination_suggestion` (validated server-side) |
 
 ### Trips (Phase 2–6)
 
@@ -254,6 +255,21 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 - [x] **Community trip detail** — read-only itinerary + comments
 - [x] **Share** button on trip result (caption modal, unshare)
 
+### Phase 7b — Quiz validation & UX polish ✅
+
+**Validation (`src/lib/quizValidation.ts`, `backend/app/services/quiz_validation.py`):**
+- [x] Cities — pick from Mapbox suggestions when results exist; format + Mapbox verify on submit
+- [x] Dates — no past departures; max 14 nights; errors only when both dates set
+- [x] Travelers — caps (20 total); choice options must match allowed keys
+- [x] Cross-field — origin ≠ destination
+- [x] UX — no error banners while Next is grayed; city errors only after tapping Next
+
+**Other polish:**
+- [x] Mobile quiz — scrollable content + pinned footer (no layout jump between steps)
+- [x] Desktop nav — logo left · tabs centered · Profile right (`max-w-5xl`)
+- [x] Faster itinerary — geocoding deferred to background on trip result (not blocking generate)
+- [ ] Desktop home/dashboard wide-screen layout (deferred)
+
 ---
 
 ## Current priority — Phase 8: Admin + deployment
@@ -274,6 +290,7 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 6. Flights/hotels + deep-links ✅  
 6b. Trip result UX + auth light mode + nav polish ✅  
 7. Community ✅  
+7b. Quiz validation + mobile/nav polish ✅  
 8. Admin  
 
 ---
@@ -291,14 +308,17 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 9. **Consult chat:** Client-side history only; not persisted to DB.
 10. **Maps on result page:** Google Maps deep-links only.
 11. **Typecheck:** `npm run typecheck` needs `typescript` in devDependencies.
+12. **Itinerary speed:** `POST /trips/generate` is LLM-bound; Mapbox geocoding runs in background on result page via `enrich-places`.
+13. **Flights/hotels:** Loaded after itinerary appears (Duffel can be slow; does not block generate spinner).
+14. **Quiz validation:** City must be picked from suggestions when Mapbox returns matches; backend re-validates on submit.
 
 ---
 
 ## Handoff — start here in next chat
 
-1. **Phase 8 — Admin + deployment** — dashboard, cloud hosting.
+1. **Phase 8 — Admin + deployment** — dashboard, cloud hosting (Vercel + Render + Neon pattern).
 
-2. **Optional polish** — persist consult chat server-side; `/welcome` marketing route for logged-out users.
+2. **Optional polish** — desktop wide-screen home; persist consult chat server-side; `/welcome` marketing route.
 
 ---
 
@@ -311,15 +331,26 @@ Read plan.md and README.md first; plan.md is the source of truth.
 Repo: UsmMH/Rihla-Tech
 Stack: React 18 + Vite + Tailwind + FastAPI + PostgreSQL (Docker 5433) + Gemini/Duffel/Mapbox
 
-Done through Phase 7:
+Done (Phases 0–7 committed on main):
 - Community: share trips, Discover/Saved feed, vote, save, comment
-- Duffel flights + mock hotels on trip result (collapsible sections)
-- Collapsible day-by-day itinerary; back to My Trips
-- Light login/register; mobile nav polish; in-app delete confirm
+- Duffel flights + mock hotels; collapsible trip result; Google Maps deep-links
+- App shell: Home · My Trips · Community; light auth; consult chat
 
-NEXT: Phase 8 Admin + deployment
+Local / uncommitted polish (Phase 7b):
+- Quiz & preferences validation (cities, dates max 14 nights, travelers, origin ≠ destination)
+- Mobile quiz layout fix; desktop nav (centered tabs, Profile right)
+- Faster generate: geocoding runs in background on result page
 
-Key files: plan.md, src/pages/CommunityPage.tsx, backend/app/routers/community.py
+NEXT: Commit 7b if needed → Phase 8 (admin + deploy)
+
+Constraints:
+- No Google Maps SDK; deep-links OK
+- No RapidAPI hotel scrapers
+- Don't commit .env, .phase5-backup/, node_modules/, backend/.venv/
+- Ask before git commit unless I say to commit
+
+Key files: plan.md, src/lib/quizValidation.ts, backend/app/services/quiz_validation.py,
+src/components/trip/QuestionFlow.tsx, src/pages/TripResult.tsx
 ```
 
 ---

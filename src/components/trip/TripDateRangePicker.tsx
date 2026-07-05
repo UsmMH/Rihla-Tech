@@ -152,8 +152,9 @@ export default function TripDateRangePicker({ value, onChange }: TripDateRangePi
           {summary}
         </p>
         {nights !== null && nights >= 0 && (
-          <p style={{ color: theme.accentSky, fontSize: "0.8rem", marginTop: "0.25rem", fontFamily: "system-ui, sans-serif" }}>
+          <p style={{ color: nights > 14 ? "#ef4444" : theme.accentSky, fontSize: "0.8rem", marginTop: "0.25rem", fontFamily: "system-ui, sans-serif" }}>
             {nights === 0 ? "Same-day trip" : `${nights} night${nights === 1 ? "" : "s"}`}
+            {nights > 14 ? " — max 14 nights" : ""}
           </p>
         )}
       </div>

@@ -24,7 +24,7 @@ Planning a trip means juggling dates, budgets, destinations, and dozens of tabs 
 
 ## Key features
 
-- **Smart quiz & preferences** — logistics (dates, travelers, budget) plus trip style and pace
+- **Smart quiz & preferences** — logistics (dates, travelers, budget) plus trip style; validated inputs (cities via Mapbox, max 14 nights, traveler caps)
 - **AI itinerary generation** — real venue names, themed days, activities saved to your account
 - **“Not sure” destination path** — AI-suggested cities when you haven’t picked one yet
 - **Home dashboard** — plan a new trip, ask AI for travel advice, recent trips
@@ -60,7 +60,7 @@ Community → Discover / Saved → open trip → vote, save, comment
 
 | Step | What happens |
 |------|----------------|
-| **Quiz** | Dates, travelers, origin/destination, budget, flight/hotel toggles |
+| **Quiz** | Dates (max 14 nights), travelers, origin/destination via city search, flight/hotel toggles |
 | **Preferences** | Trip purpose, theme, pace, and personalization |
 | **Destination picker** | Shown only when destination is “not sure” — AI city suggestions |
 | **Result** | Collapsible flights, hotels, and days; Maps deep-links; share to Community |
@@ -131,6 +131,7 @@ flowchart TB
 | 6 — Flights/hotels | ✅ | Duffel sandbox + mock fallback; Booking.com deep-links |
 | 6b — UX polish | ✅ | Collapsible result, light auth, nav + delete dialog |
 | 7 — Community | ✅ | Share, vote, save, comment on shared itineraries |
+| 7b — Validation & polish | ✅ | Quiz validation, mobile quiz/nav fixes, faster generate |
 | 8 — Admin/deploy | — | Dashboard + cloud hosting |
 
 ---
@@ -205,11 +206,11 @@ src/
   components/trip/     ChatbotSidebar, QuestionFlow, OriginCityInput
   components/layout/   Navbar, AppBottomNav
   components/auth/     AuthLayout (light mode login/register)
-  lib/                 API client, auth, trips, community, places, mapDirections
+  lib/                 API client, auth, trips, community, quizValidation, places, mapDirections
 backend/
   app/
     routers/           auth, quiz, trips, places, chat, community, health
-    services/          llm, itinerary, flights, hotels, community, edit, chat, consult_chat
+    services/          llm, itinerary, flights, hotels, community, quiz_validation, edit, chat
     models/            user, trip_plan, place, chat_message, community, question
 ```
 
@@ -217,9 +218,11 @@ backend/
 
 ## Known limitations
 
-- **Community / admin** — community live; admin not started (Phase 8)
+- **Admin** — not started (Phase 8); deployment TBD (Vercel + Render + Neon suggested)
+- **Desktop home** — wide-screen layout polish deferred
 - **Consult chat** — session history is client-side only; not persisted to the database
 - **Hotels** — mock cards with Booking.com links (no live hotel API)
+- **Itinerary generate** — LLM is the main wait; flights/hotels load separately after the itinerary appears
 
 ---
 
