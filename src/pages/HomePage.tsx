@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import AdminPage from "@/pages/AdminPage";
 import AppDashboardPage from "@/pages/AppDashboardPage";
 import CommunityPage from "@/pages/CommunityPage";
 import CommunityTripPage from "@/pages/CommunityTripPage";
@@ -17,6 +18,7 @@ import { clearLastPage, clearLastTripId, saveLastTripId } from "@/lib/trips";
 type TripPage =
   | "home"
   | "profile"
+  | "admin"
   | "community"
   | "community-trip"
   | "welcome"
@@ -89,7 +91,16 @@ function TripPlanner() {
         />
       )}
 
-      {page === "profile" && <ProfilePage onNavigate={handleNavigate} />}
+      {page === "profile" && (
+        <ProfilePage
+          onNavigate={handleNavigate}
+          onOpenAdmin={() => setPage("admin")}
+        />
+      )}
+
+      {page === "admin" && (
+        <AdminPage onNavigate={handleNavigate} onBack={() => setPage("profile")} />
+      )}
 
       {page === "community" && (
         <CommunityPage onNavigate={handleNavigate} onOpenTrip={openCommunityTrip} />

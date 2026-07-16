@@ -1,0 +1,202 @@
+import { apiFetch } from "@/lib/api";
+import type { TripPlan } from "@/lib/quiz";
+
+export interface TripStat {
+  label: string;
+  value: string;
+}
+
+export interface TripActivity {
+  place_id: number;
+  name: string;
+  time: string;
+  time_slot: string;
+  type: string;
+  desc: string;
+  duration: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export interface MapPin {
+  place_id: number;
+  name: string;
+  day_number: number;
+  time_slot: string;
+  activity_type: string | null;
+  latitude: number;
+  longitude: number;
+}
+
+export interface DayItinerary {
+  day: number;
+  theme: string;
+  date: string | null;
+  activities: TripActivity[];
+}
+
+export interface TripDetail {
+  trip_plan: TripPlan;
+  destination: string;
+  duration: string;
+  tags: string;
+  stats: TripStat[];
+  itinerary: DayItinerary[];
+  map_pins: MapPin[];
+  geocoding_configured: boolean;
+  places_geocoded: number;
+  source: string;
+  fallback_reason: string | null;
+}
+
+export interface TripListItem {
+  id: number;
+  destination: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  status: string;
+  itinerary_source: string | null;
+  has_itinerary: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TripAlternative {
+  title: string;
+  tagline: string;
+  highlights: string[];
+  budget_note: string;
+  match_percent: number;
+}
+
+export interface EditTripResult {
+  alternatives: TripAlternative[];
+  source: string;
+  fallback_reason: string | null;
+}
+
+export interface ChatResponse {
+  message: string;
+  source: string;
+  fallback_reason: string | null;
+}
+
+export interface DestinationSuggestion {
+  city: string;
+  country: string;
+  blurb: string;
+}
+
+export interface SuggestDestinationsResult {
+  suggestions: DestinationSuggestion[];
+  source: string;
+  fallback_reason: string | null;
+}
+
+function normalizeTripDetail(raw: TripDetail): TripDetail {
+  return {
+    ...raw,
+    map_pins: raw.map_pins ?? [],
+    stats: raw.stats ?? [],
+    geocoding_configured: raw.geocoding_configured ?? false,
+    places_geocoded: raw.places_geocoded ?? 0,
+    itinerary: (raw.itinerary ?? []).map((day) => ({
+      ...day,
+      activities: (day.activities ?? []).map((activity, index) => ({
+        place_id: activity.place_id ?? index,
+        name: activity.name ?? "Activity",
+        time: activity.time ?? "",
+        time_slot: activity.time_slot ?? "morning",
+        type: activity.type ?? "Activity",
+        desc: activity.desc ?? "",
+        duration: activity.duration ?? "1 hr",
+        latitude: activity.latitude ?? null,
+        longitude: activity.longitude ?? null,
+      })),
+    })),
+  };
+}
+
+export async function suggestDestinations(tripPlanId: number): Promise<SuggestDestinationsResult> {
+  return apiFetch<SuggestDestinationsResult>("/trips/suggest-destinations", {
+    method: "POST",
+    body: JSON.stringify({ trip_plan_id: tripPlanId }),
+  });
+}
+
+export async function selectDestination(tripPlanId: number, destination: string): Promise<TripPlan> {
+  return apiFetch<TripPlan>(`/trips/${tripPlanId}/destination`, {
+    method: "POST",
+    body: JSON.stringify({ destination }),
+  });
+}
+
+export async function generateTrip(tripPlanId: number): Promise<TripDetail> {
+  const result = await apiFetch<TripDetail>("/trips/generate", {
+    method: "POST",
+    body: JSON.stringify({ trip_plan_id: tripPlanId }),
+  });
+  return normalizeTripDetail(result);
+}
+
+export async function getTrip(tripPlanId: number): Promise<TripDetail> {
+  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}`);
+  return normalizeTripDetail(result);
+}
+
+export async function enrichTripPlaces(tripPlanId: number): Promise<TripDetail> {
+  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/enrich-places`, { method: "POST" });
+  return normalizeTripDetail(result);
+}
+
+const LAST_TRIP_KEY = "rihlatech_last_trip_id";
+const LAST_PAGE_KEY = "rihlatech_last_page";
+
+export function saveLastTripId(tripPlanId: number): void {
+  localStorage.setItem(LAST_TRIP_KEY, String(tripPlanId));
+}
+
+export function loadLastTripId(): number | null {
+  const raw = localStorage.getItem(LAST_TRIP_KEY);
+  if (!raw) return null;
+  const id = Number(raw);
+  return Number.isFinite(id) ? id : null;
+}
+
+export function saveLastPage(page: string): void {
+  localStorage.setItem(LAST_PAGE_KEY, page);
+}
+
+export function loadLastPage(): string | null {
+  return localStorage.getItem(LAST_PAGE_KEY);
+}
+
+export function clearLastTripId(): void {
+  localStorage.removeItem(LAST_TRIP_KEY);
+  localStorage.removeItem(LAST_PAGE_KEY);
+}
+
+export async function listTrips(): Promise<TripListItem[]> {
+  const result = await apiFetch<{ trips: TripListItem[] }>("/trips");
+  return result.trips;
+}
+
+export async function editTrip(
+  tripPlanId: number,
+  prompt = "Suggest 3 alternative destinations similar to this trip.",
+): Promise<EditTripResult> {
+  return apiFetch<EditTripResult>(`/trips/${tripPlanId}/edit`, {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  });
+}
+
+export async function sendChatMessage(
+  message: string,
+  tripPlanId: number,
+): Promise<ChatResponse> {
+  return apiFetch<ChatResponse>("/chat/message", {
+    method: "POST",
+    body: JSON.stringify({ trip_plan_id: tripPlanId, message }),
+  });
+}

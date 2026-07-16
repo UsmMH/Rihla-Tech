@@ -132,7 +132,7 @@ flowchart TB
 | 6b — UX polish | ✅ | Collapsible result, light auth, nav + delete dialog |
 | 7 — Community | ✅ | Share, vote, save, comment on shared itineraries |
 | 7b — Validation & polish | ✅ | Quiz validation, mobile quiz/nav fixes, faster generate |
-| 8 — Admin/deploy | — | Dashboard + cloud hosting |
+| 8 — Admin/deploy | 🔄 | Admin dashboard + Render/Vercel configs (deploy pending) |
 
 ---
 
@@ -173,6 +173,29 @@ Open **http://localhost:5173**
 
 Restart **both** backend and `npm run dev` after changing `.env` (Vite reads `VITE_*` only at startup).
 
+### Test on your phone (same Wi‑Fi)
+
+`npm run dev` prints **Network** URLs. Use the **`192.168.x.x`** address (your Wi‑Fi IP), not `172.x.x.x` (virtual adapter from WSL/Docker).
+
+### Admin (local)
+
+```bash
+cd backend
+.\.venv\Scripts\python scripts\promote_admin.py your@email.com
+```
+
+Log in → Profile → **Admin dashboard** (stats, users, trips, community moderation).
+
+### Deploy (Vercel + Render + Neon)
+
+1. **Neon** — Postgres; copy connection string → Render `DATABASE_URL`
+2. **Render** — Web service from `render.yaml` (`backend/`, health `/api/health`)
+3. **Vercel** — Vite app; set `VITE_API_BASE_URL=https://<your-api>.onrender.com/api`
+4. **Render** — `CORS_ORIGINS=https://<your-app>.vercel.app`
+5. Promote admin on prod DB; smoke-test login → quiz → generate
+
+See `plan.md` for full checklist and admin API reference.
+
 ### Scripts
 
 ```bash
@@ -181,6 +204,7 @@ npm run build        # Production build
 npm run typecheck    # TypeScript check
 
 # Backend (from backend/)
+.\.venv\Scripts\python scripts\promote_admin.py your@email.com
 .\.venv\Scripts\python scripts\test_llm.py
 .\.venv\Scripts\python scripts\test_generate_flow.py
 ```

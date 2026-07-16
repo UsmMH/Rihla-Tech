@@ -17,6 +17,7 @@ export default defineConfig({
     include: ["mapbox-gl"],
   },
   server: {
+    host: true,
     proxy: {
       "/api": {
         target: "http://localhost:8000",

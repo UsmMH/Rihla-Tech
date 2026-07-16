@@ -274,8 +274,42 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 
 ## Current priority — Phase 8: Admin + deployment
 
-- [ ] Admin dashboard
-- [ ] Cloud deploy (Railway / Render / university server — TBD)
+**In progress (local):**
+- [x] Admin API (`/api/admin/*`) — stats, users, trips, unshare, delete
+- [x] Admin dashboard UI (Profile → Admin dashboard, `is_admin` only)
+- [x] `promote_admin.py` script
+- [x] Deploy configs: `render.yaml`, `vercel.json`, `.env.example` updates
+- [ ] Deploy to Render + Neon + Vercel (manual steps below)
+- [ ] Smoke-test on production URL
+
+### Deploy checklist (Vercel + Render + Neon)
+
+1. **Neon** — create Postgres DB; copy `DATABASE_URL` (use `?sslmode=require` if needed).
+2. **Render** — New Web Service from repo; apply `render.yaml` or set:
+   - Root: `backend`
+   - Build: `pip install -r requirements.txt`
+   - Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - Env: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, LLM/Mapbox/Duffel keys
+3. **Promote admin** (after first register on prod):  
+   `python scripts/promote_admin.py your@email.com` (Render shell or locally with prod `DATABASE_URL`)
+4. **Vercel** — import repo; framework Vite; env:
+   - `VITE_API_BASE_URL=https://<render-service>.onrender.com/api`
+   - `VITE_MAPBOX_ACCESS_TOKEN` (optional)
+5. **Render** — set `CORS_ORIGINS` to your Vercel URL (e.g. `https://rihlatech.vercel.app`).
+6. **Smoke test** — register → quiz → generate → community → admin panel.
+
+### Admin API
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/admin/stats` | User/trip/shared/comment counts |
+| GET | `/api/admin/users` | List users |
+| PATCH | `/api/admin/users/{id}` | Toggle `is_admin` |
+| GET | `/api/admin/trips` | List all trips |
+| DELETE | `/api/admin/trips/{id}` | Delete any trip |
+| DELETE | `/api/admin/trips/{id}/share` | Unshare (moderation) |
+
+**Local admin:** `cd backend && .\.venv\Scripts\python scripts\promote_admin.py you@example.com`
 
 ---
 

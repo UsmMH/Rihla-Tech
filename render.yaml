@@ -1,0 +1,34 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# 1. Create a Neon Postgres database and paste DATABASE_URL in the Render dashboard.
+# 2. Set CORS_ORIGINS to your Vercel URL (e.g. https://rihlatech.vercel.app).
+# 3. Add LLM, Mapbox, and Duffel keys in the Render environment tab.
+
+services:
+  - type: web
+    name: rihlatech-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: LLM_PROVIDER
+        value: auto
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: MAPBOX_ACCESS_TOKEN
+        sync: false
+      - key: DUFFEL_ACCESS_TOKEN
+        sync: false
+      - key: OPENROUTER_SITE_URL
+        sync: false
+      - key: OPENROUTER_APP_NAME
+        value: RihlaTech
+      - key: PYTHON_VERSION
+        value: "3.11.9"

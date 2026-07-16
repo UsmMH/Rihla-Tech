@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { LogOut, Mail, Moon, Sun, User } from "lucide-react";
+import { LogOut, Mail, Moon, Shield, Sun, User } from "lucide-react";
 import AppBottomNav from "@/components/layout/AppBottomNav";
 import Navbar from "@/components/layout/Navbar";
 import { useAuth } from "@/contexts/AuthContext";
@@ -11,9 +11,10 @@ import type { AppTab } from "@/lib/navigation";
 
 type ProfilePageProps = {
   onNavigate: (tab: AppTab) => void;
+  onOpenAdmin?: () => void;
 };
 
-export default function ProfilePage({ onNavigate }: ProfilePageProps) {
+export default function ProfilePage({ onNavigate, onOpenAdmin }: ProfilePageProps) {
   const { theme, isDark, toggle } = useTheme();
   const { user, logout } = useAuth();
   const [email, setEmail] = useState(user?.email ?? "");
@@ -95,6 +96,25 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
               </span>
             </button>
           </div>
+
+          {user?.is_admin && onOpenAdmin && (
+            <button
+              type="button"
+              onClick={onOpenAdmin}
+              className="w-full rounded-2xl px-4 py-4 flex items-center gap-3 cursor-pointer min-h-[52px] mb-4"
+              style={{
+                background: theme.optionBg,
+                border: `1px solid ${theme.border}`,
+                color: theme.body,
+                fontFamily: "system-ui, sans-serif",
+                fontSize: "0.95rem",
+                fontWeight: 500,
+              }}
+            >
+              <Shield size={18} color={theme.accentSky} />
+              Admin dashboard
+            </button>
+          )}
 
           <button
             type="button"
