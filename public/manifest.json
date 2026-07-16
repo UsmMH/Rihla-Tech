@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "RihlaTech",
+  "short_name": "RihlaTech",
+  "description": "AI-powered travel planning — powered by AI, driven by you.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4F8FC",
+  "theme_color": "#1e4b88",
+  "icons": [
+    {
+      "src": "/rihlatech-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/rihlatech-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/rihlatech-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
