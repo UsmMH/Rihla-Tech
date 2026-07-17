@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import QuestionFlow from "@/components/trip/QuestionFlow";
+import PlanningBackHeader, { PLANNING_HEADER_HEIGHT_PX } from "@/components/layout/PlanningBackHeader";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
 import type { AppTab } from "@/lib/navigation";
@@ -9,12 +10,19 @@ import { fetchQuestions, submitQuizAnswers } from "@/lib/quiz";
 
 type PreferencesPageProps = {
   tripPlanId: number;
+  needsDestinationPicker: boolean;
   onComplete: (tripPlanId: number, needsDestinationSuggestion: boolean) => void;
   onBack: () => void;
   onNavigate?: (tab: AppTab) => void;
 };
 
-export default function PreferencesPage({ tripPlanId, onComplete, onBack, onNavigate }: PreferencesPageProps) {
+export default function PreferencesPage({
+  tripPlanId,
+  needsDestinationPicker,
+  onComplete,
+  onBack,
+  onNavigate,
+}: PreferencesPageProps) {
   const { theme } = useTheme();
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,19 +52,31 @@ export default function PreferencesPage({ tripPlanId, onComplete, onBack, onNavi
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen" style={{ background: theme.pageBg, color: theme.muted }}>
-        Loading preferences...
+      <div style={{ background: theme.pageBg, minHeight: "100svh" }}>
+        <PlanningBackHeader onBack={onBack} />
+        <div
+          className="flex items-center justify-center px-4"
+          style={{ minHeight: `calc(100svh - ${PLANNING_HEADER_HEIGHT_PX}px)`, color: theme.muted }}
+        >
+          Loading preferences...
+        </div>
       </div>
     );
   }
 
   if (error && questions.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-4" style={{ background: theme.pageBg }}>
-        <p style={{ color: theme.body }}>{error}</p>
-        <button type="button" onClick={onBack} className="px-4 py-2 rounded-lg" style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body }}>
-          Go back
-        </button>
+      <div style={{ background: theme.pageBg, minHeight: "100svh" }}>
+        <PlanningBackHeader onBack={onBack} />
+        <div
+          className="flex flex-col items-center justify-center gap-4 px-4"
+          style={{ minHeight: `calc(100svh - ${PLANNING_HEADER_HEIGHT_PX}px)` }}
+        >
+          <p style={{ color: theme.body }}>{error}</p>
+          <button type="button" onClick={onBack} className="px-4 py-2 rounded-lg" style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body }}>
+            Go back
+          </button>
+        </div>
       </div>
     );
   }
@@ -71,9 +91,8 @@ export default function PreferencesPage({ tripPlanId, onComplete, onBack, onNavi
       <QuestionFlow
         questions={questions}
         stepLabel="Your preferences"
-        finalButtonLabel="Find My Destination"
+        finalButtonLabel={needsDestinationPicker ? "Find My Destination" : "Generate My Itinerary"}
         onBack={onBack}
-        onNavigate={onNavigate}
         onComplete={handleComplete}
         submitting={submitting}
       />

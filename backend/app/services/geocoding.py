@@ -10,6 +10,7 @@ from urllib.request import urlopen
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.services.place_labels import city_comparable_key
 from app.models.place import Place
 from app.models.trip_plan import TripPlan
 
@@ -812,6 +813,22 @@ def geocode_query(
     )
 
 
+def _normalize_city_label(feature: dict) -> str:
+    """Build a consistent 'City, Country' label from Mapbox feature properties."""
+    city = str(feature.get("text") or "").strip()
+    if city.lower().startswith("al-"):
+        city = city[3:].strip() or city
+    country = ""
+    for ctx in feature.get("context") or []:
+        ctx_id = str(ctx.get("id") or "")
+        if ctx_id.startswith("country."):
+            country = str(ctx.get("text") or "").strip()
+            break
+    if city and country:
+        return f"{city}, {country}"
+    return str(feature.get("place_name") or feature.get("text") or "").strip()
+
+
 def search_places(query: str, *, limit: int = 5) -> list[dict]:
     """Search cities/places for origin autocomplete."""
     encoded = quote(query.strip(), safe="")
@@ -824,22 +841,130 @@ def search_places(query: str, *, limit: int = 5) -> list[dict]:
         return []
 
     results: list[dict] = []
+    seen_keys: set[str] = set()
     for feature in payload.get("features", []):
         center = feature.get("center")
         if not isinstance(center, list) or len(center) < 2:
             continue
         lng, lat = float(center[0]), float(center[1])
-        label = feature.get("place_name") or feature.get("text") or ""
+        label = _normalize_city_label(feature)
         if not label:
             continue
+        dedupe_key = city_comparable_key(label)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
         results.append(
             {
                 "label": label,
                 "latitude": lat,
                 "longitude": lng,
+                "kind": "city",
+                "iata_code": None,
+                "city": label.split(",")[0].strip() or None,
             }
         )
     return results
+
+
+def _airport_dedupe_key(item: dict) -> str:
+    iata = item.get("iata_code")
+    if isinstance(iata, str) and iata:
+        return iata.upper()
+    label = str(item.get("label") or "")
+    return label.split("(")[0].split(",")[0].strip().lower()
+
+
+def search_airports(query: str, *, limit: int = 8) -> list[dict]:
+    """Search airports for origin autocomplete when flights are included."""
+    cleaned = query.strip()
+    if len(cleaned) < 2:
+        return []
+
+    from app.services.flights import search_airport_suggestions
+
+    results = search_airport_suggestions(cleaned, limit=limit)
+    seen_keys = {_airport_dedupe_key(item) for item in results}
+
+    if len(results) < limit:
+        for item in _searchbox_airport_results(cleaned, limit=limit):
+            key = _airport_dedupe_key(item)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            results.append(item)
+            if len(results) >= limit:
+                break
+
+    if not results and "airport" not in cleaned.lower():
+        return search_airports(f"{cleaned} airport", limit=limit)
+
+    return results[:limit]
+
+
+def _searchbox_airport_results(query: str, *, limit: int = 8) -> list[dict]:
+    """Mapbox Search Box airport POI fallback when Duffel is unavailable."""
+    if not mapbox_configured() or not query.strip():
+        return []
+
+    token = settings.mapbox_access_token
+    encoded = quote(query.strip(), safe="")
+    url = (
+        f"{MAPBOX_SEARCHBOX_URL}?q={encoded}"
+        f"&limit={limit}&types=poi&poi_category=airport&access_token={token}"
+    )
+
+    try:
+        with urlopen(url, timeout=12) as response:
+            payload = json.loads(response.read().decode())
+    except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
+        logger.warning("Mapbox airport search failed: %s", exc)
+        return []
+
+    results: list[dict] = []
+    for feature in payload.get("features", []):
+        item = _normalize_searchbox_airport(feature)
+        if item:
+            results.append(item)
+    return results
+
+
+def _normalize_searchbox_airport(feature: dict) -> dict | None:
+    geometry = feature.get("geometry", {})
+    coords = geometry.get("coordinates")
+    if not isinstance(coords, list) or len(coords) < 2:
+        return None
+
+    props = feature.get("properties", {}) or {}
+    name = str(props.get("name") or props.get("name_preferred") or "").strip()
+    if not name:
+        return None
+
+    lng, lat = float(coords[0]), float(coords[1])
+    context = props.get("context") or {}
+    city = str(context.get("place", {}).get("name") or "").strip()
+    country = str(context.get("country", {}).get("name") or "").strip()
+    if city.lower().startswith("al-"):
+        city = city[3:].strip() or city
+
+    iata_match = re.search(r"\b([A-Z]{3})\b", name)
+    iata = iata_match.group(1) if iata_match else None
+    display_name = f"{name} ({iata})" if iata else name
+    if city and country:
+        label = f"{display_name}, {city}, {country}"
+    elif country:
+        label = f"{display_name}, {country}"
+    else:
+        label = display_name
+
+    return {
+        "label": label,
+        "latitude": lat,
+        "longitude": lng,
+        "kind": "airport",
+        "iata_code": iata,
+        "city": city or None,
+    }
 
 
 def _coords_valid_for_trip(

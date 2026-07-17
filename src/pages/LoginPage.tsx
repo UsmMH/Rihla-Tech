@@ -1,8 +1,9 @@
-import { FormEvent, useState, type CSSProperties } from "react";
+import { FormEvent, useState } from "react";
 
-import { AuthLayout } from "@/components/auth/AuthLayout";
+import { AuthLayout, PasswordField } from "@/components/auth/AuthLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError } from "@/lib/api";
+import { normalizeEmail, validateEmail, validatePassword } from "@/lib/credentialsValidation";
 import { lightTheme } from "@/themes";
 
 type LoginPageProps = {
@@ -12,14 +13,14 @@ type LoginPageProps = {
 
 const theme = lightTheme;
 
-const inputStyle: CSSProperties = {
+const inputStyle = {
   background: theme.inputBg,
   border: `1px solid ${theme.inputBorder}`,
   color: theme.inputText,
   fontFamily: "system-ui, sans-serif",
 };
 
-const labelStyle: CSSProperties = {
+const labelStyle = {
   color: theme.body,
   fontFamily: "system-ui, sans-serif",
   fontSize: "0.875rem",
@@ -36,10 +37,22 @@ export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+
+    const emailError = validateEmail(email);
+    if (emailError) {
+      setError(emailError);
+      return;
+    }
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      await login({ email, password });
+      await login({ email: normalizeEmail(email), password });
       onSuccess();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Login failed");
@@ -83,21 +96,13 @@ export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
           />
         </div>
 
-        <div className="space-y-2">
-          <label htmlFor="password" style={labelStyle}>
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            autoComplete="current-password"
-            className="w-full rounded-xl px-4 py-3 outline-none min-h-[48px] text-base"
-            style={inputStyle}
-          />
-        </div>
+        <PasswordField
+          id="password"
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+        />
 
         {error && (
           <p className="text-sm" style={{ color: "#c62828", fontFamily: "system-ui, sans-serif" }}>

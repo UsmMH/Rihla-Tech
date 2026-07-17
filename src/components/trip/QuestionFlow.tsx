@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import Navbar from "@/components/layout/Navbar";
+import PlanningBackHeader, { PLANNING_HEADER_HEIGHT_PX } from "@/components/layout/PlanningBackHeader";
 import OriginCityInput, { type CityInputMeta } from "@/components/trip/OriginCityInput";
 import TripDateRangePicker from "@/components/trip/TripDateRangePicker";
 import TripTravelersInput from "@/components/trip/TripTravelersInput";
 import { useTheme } from "@/contexts/ThemeContext";
-import type { AppTab } from "@/lib/navigation";
 import type { AnswerValue, QuizQuestion } from "@/lib/quiz";
 import { validateCrossFields, isQuestionStepReady, validateQuestionStep } from "@/lib/quizValidation";
 
@@ -15,7 +14,6 @@ type QuestionFlowProps = {
   stepLabel: string;
   finalButtonLabel: string;
   onBack: () => void;
-  onNavigate?: (tab: AppTab) => void;
   onComplete: (answers: { question_id: number; value: AnswerValue }[]) => void;
   submitting?: boolean;
 };
@@ -33,7 +31,6 @@ export default function QuestionFlow({
   stepLabel,
   finalButtonLabel,
   onBack,
-  onNavigate,
   onComplete,
   submitting = false,
 }: QuestionFlowProps) {
@@ -50,8 +47,16 @@ export default function QuestionFlow({
       .map((q) => answers[q.id])
       .find((v) => v !== undefined);
 
+    const includeFlights = questions
+      .filter((q) => q.key === "include_flights")
+      .map((q) => answers[q.id])
+      .find((v) => v !== undefined);
+
     return questions.filter((q) => {
       if (q.key === "destination" && destinationKnown === "not_sure") {
+        return false;
+      }
+      if (q.key === "origin" && includeFlights !== "yes") {
         return false;
       }
       return true;
@@ -61,9 +66,20 @@ export default function QuestionFlow({
   const step = visibleQuestions[currentStep];
   const selected = step ? answers[step.id] : undefined;
   const cityMeta = step ? cityMetaByQuestion[step.id] : undefined;
+
+  const destinationAnswer = useMemo(() => {
+    const destQ = questions.find((q) => q.key === "destination");
+    if (!destQ) return undefined;
+    const value = answers[destQ.id];
+    return typeof value === "string" ? value : undefined;
+  }, [questions, answers]);
+
+  const crossFieldError =
+    step?.key === "origin" ? validateCrossFields(questions, answers) : null;
   const progress = visibleQuestions.length ? ((currentStep + 1) / visibleQuestions.length) * 100 : 0;
   const currentError = step ? stepValidationError(step, selected, cityMeta) : null;
-  const canProceed = step ? isQuestionStepReady(step, selected, cityMeta) : false;
+  const canProceed =
+    step && !crossFieldError ? isQuestionStepReady(step, selected, cityMeta) : false;
   const isLastStep = currentStep === visibleQuestions.length - 1;
 
   const dateValue =
@@ -108,12 +124,11 @@ export default function QuestionFlow({
       return;
     }
 
-    if (isLastStep) {
-      const crossError = validateCrossFields(questions, answers);
-      if (crossError) {
-        setStepError(crossError);
-        return;
-      }
+    const crossError =
+      step.key === "origin" || isLastStep ? validateCrossFields(questions, answers) : null;
+    if (crossError) {
+      setStepError(crossError);
+      return;
     }
 
     setStepError(null);
@@ -124,7 +139,7 @@ export default function QuestionFlow({
     } else {
       const payload = visibleQuestions.map((q) => ({
         question_id: q.id,
-        value: answers[q.id]!,
+        value: answers[q.id] ?? (q.key === "travel_extras" ? [] : answers[q.id]!),
       }));
       onComplete(payload);
     }
@@ -151,9 +166,9 @@ export default function QuestionFlow({
 
   return (
     <div className="min-h-svh flex flex-col" style={{ background: theme.pageBg, transition: "background 0.3s" }}>
-      <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
+      <PlanningBackHeader onBack={onBack} />
 
-      <div className="flex-1 overflow-y-auto px-4 pt-[72px]">
+      <div className="flex-1 overflow-y-auto px-4" style={{ paddingTop: PLANNING_HEADER_HEIGHT_PX + 16 }}>
         <div className="w-full max-w-xl mx-auto py-4 md:py-6">
           <div className="flex items-center justify-between mb-2">
             <span style={{ color: theme.muted, fontSize: "0.78rem", fontFamily: "system-ui, sans-serif" }}>
@@ -247,16 +262,15 @@ export default function QuestionFlow({
                   value={(selected as string) ?? ""}
                   onChange={setAnswer}
                   showValidation={Boolean(stepError)}
+                  searchKind={step.key === "origin" ? "airport" : "city"}
+                  conflictWith={step.key === "origin" ? destinationAnswer : undefined}
                   onMetaChange={(meta) => {
                     setCityMetaByQuestion((prev) => ({ ...prev, [step.id]: meta }));
                   }}
                   placeholder={
                     step.key === "origin"
-                      ? "Search your departure city..."
+                      ? "Search departure airport..."
                       : "Search your destination..."
-                  }
-                  suggestionsTitle={
-                    step.key === "origin" ? "SUGGESTED CITIES" : "SUGGESTED DESTINATIONS"
                   }
                 />
               )}
@@ -318,6 +332,20 @@ export default function QuestionFlow({
               }}
             >
               {stepError}
+            </p>
+          )}
+
+          {crossFieldError && !stepError && step.key === "origin" && (
+            <p
+              className="mt-3 rounded-xl px-4 py-3 text-sm"
+              style={{
+                background: "rgba(239, 68, 68, 0.1)",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                color: theme.body,
+                fontFamily: "system-ui, sans-serif",
+              }}
+            >
+              {crossFieldError}
             </p>
           )}
 

@@ -1,8 +1,14 @@
-import { FormEvent, useState, type CSSProperties } from "react";
+import { FormEvent, useState } from "react";
 
-import { AuthLayout } from "@/components/auth/AuthLayout";
+import { AuthLayout, PasswordField } from "@/components/auth/AuthLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError } from "@/lib/api";
+import {
+  normalizeEmail,
+  PASSWORD_MIN_LENGTH,
+  validateEmail,
+  validatePassword,
+} from "@/lib/credentialsValidation";
 import { lightTheme } from "@/themes";
 
 type RegisterPageProps = {
@@ -12,14 +18,14 @@ type RegisterPageProps = {
 
 const theme = lightTheme;
 
-const inputStyle: CSSProperties = {
+const inputStyle = {
   background: theme.inputBg,
   border: `1px solid ${theme.inputBorder}`,
   color: theme.inputText,
   fontFamily: "system-ui, sans-serif",
 };
 
-const labelStyle: CSSProperties = {
+const labelStyle = {
   color: theme.body,
   fontFamily: "system-ui, sans-serif",
   fontSize: "0.875rem",
@@ -39,15 +45,27 @@ export default function RegisterPage({ onSuccess, onGoLogin }: RegisterPageProps
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+
+    const emailError = validateEmail(email);
+    if (emailError) {
+      setError(emailError);
+      return;
+    }
+    const passwordError = validatePassword(password, { forRegister: true });
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       await register({
-        first_name: firstName,
-        last_name: lastName,
-        email,
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        email: normalizeEmail(email),
         password,
-        phone_num: phone || undefined,
+        phone_num: phone.trim() || undefined,
       });
       onSuccess();
     } catch (err) {
@@ -135,22 +153,15 @@ export default function RegisterPage({ onSuccess, onGoLogin }: RegisterPageProps
           />
         </div>
 
-        <div className="space-y-2">
-          <label htmlFor="password" style={labelStyle}>
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={8}
-            autoComplete="new-password"
-            className="w-full rounded-xl px-4 py-3 outline-none min-h-[48px]"
-            style={inputStyle}
-          />
-        </div>
+        <PasswordField
+          id="password"
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="new-password"
+          minLength={PASSWORD_MIN_LENGTH}
+          hint={`At least ${PASSWORD_MIN_LENGTH} characters with one letter and one number.`}
+        />
 
         {error && (
           <p className="text-sm" style={{ color: "#c62828", fontFamily: "system-ui, sans-serif" }}>

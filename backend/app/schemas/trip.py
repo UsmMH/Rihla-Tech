@@ -85,6 +85,9 @@ class PlaceSearchResult(BaseModel):
     label: str
     latitude: float
     longitude: float
+    kind: str = "city"
+    iata_code: str | None = None
+    city: str | None = None
 
 
 class ActivityPlaceSearchResult(BaseModel):
@@ -229,6 +232,7 @@ class FlightOfferPublic(BaseModel):
     id: str
     airline: str
     price: str
+    price_note: str | None = None
     price_amount: float | None = None
     currency: str = "USD"
     outbound: FlightSegmentPublic
@@ -251,6 +255,7 @@ class HotelOptionPublic(BaseModel):
     area: str
     stars: int
     price_per_night: str
+    price_note: str | None = None
     price_tier: str
     amenities: list[str]
     booking_url: str

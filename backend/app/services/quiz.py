@@ -9,6 +9,7 @@ from app.models.trip_plan import QuizResponse, TripPlan
 from app.models.user import User
 from app.schemas.quiz import QuizAnswerItem, QuizSubmitResponse, TripPlanPublic
 from app.services.quiz_validation import validate_quiz_submission
+from app.services.theme_preferences import encode_theme_preferences
 
 
 def get_questions_by_phase(db: Session, phase: str) -> list[Question]:
@@ -61,12 +62,15 @@ def _apply_answer_to_trip(trip: TripPlan, question: Question, value) -> None:
         trip.origin = value.strip() or None
     elif key == "trip_purpose" and isinstance(value, str):
         trip.trip_purpose = value
-    elif key == "theme" and isinstance(value, str):
-        trip.theme = value
     elif key == "budget_tier" and isinstance(value, str):
         trip.budget_tier = value
+    elif key == "travel_extras" and isinstance(value, list):
+        extras = {str(item) for item in value}
+        trip.include_hotels = "hotels" in extras
     elif key == "include_flights":
         trip.include_flights = value == "yes" or value is True
+        if value != "yes" and value is not True:
+            trip.origin = None
     elif key == "include_hotels":
         trip.include_hotels = value == "yes" or value is True
 
@@ -139,6 +143,27 @@ def submit_quiz_answers(
         question = question_map[item.question_id]
         _apply_answer_to_trip(trip, question, item.value)
         _upsert_response(db, user, trip, item.question_id, item.value)
+
+    if phase == "quiz" and answers_by_id:
+        answers_by_key = {
+            question_map[qid].key: val
+            for qid, val in answers_by_id.items()
+            if qid in question_map
+        }
+        if answers_by_key.get("include_flights") != "yes":
+            trip.origin = None
+
+    if phase == "preferences":
+        pace_answer = next(
+            (item.value for item in answers if question_map[item.question_id].key == "pace"),
+            None,
+        )
+        theme_answer = next(
+            (item.value for item in answers if question_map[item.question_id].key == "theme"),
+            None,
+        )
+        pace_key = pace_answer if isinstance(pace_answer, str) else None
+        trip.theme = encode_theme_preferences(pace_key, theme_answer)
 
     if phase == "quiz":
         trip.status = "quiz_complete"

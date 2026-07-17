@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 
 import QuestionFlow from "@/components/trip/QuestionFlow";
+import PlanningBackHeader, { PLANNING_HEADER_HEIGHT_PX } from "@/components/layout/PlanningBackHeader";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
 import type { AppTab } from "@/lib/navigation";
-import type { AnswerValue, QuizQuestion } from "@/lib/quiz";
+import type { AnswerValue, QuizQuestion, TripPlan } from "@/lib/quiz";
 import { fetchQuestions, submitQuizAnswers } from "@/lib/quiz";
 
 type QuizPageProps = {
-  onComplete: (tripPlanId: number) => void;
+  onComplete: (tripPlanId: number, tripPlan: TripPlan) => void;
   onBack: () => void;
   onNavigate?: (tab: AppTab) => void;
 };
@@ -34,7 +35,7 @@ export default function QuizPage({ onComplete, onBack, onNavigate }: QuizPagePro
     setError(null);
     try {
       const result = await submitQuizAnswers("quiz", answers);
-      onComplete(result.trip_plan.id);
+      onComplete(result.trip_plan.id, result.trip_plan);
     } catch (err: unknown) {
       setError(err instanceof ApiError ? err.message : "Failed to save quiz answers");
       setSubmitting(false);
@@ -43,19 +44,31 @@ export default function QuizPage({ onComplete, onBack, onNavigate }: QuizPagePro
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen" style={{ background: theme.pageBg, color: theme.muted }}>
-        Loading quiz...
+      <div style={{ background: theme.pageBg, minHeight: "100svh" }}>
+        <PlanningBackHeader onBack={onBack} />
+        <div
+          className="flex items-center justify-center px-4"
+          style={{ minHeight: `calc(100svh - ${PLANNING_HEADER_HEIGHT_PX}px)`, color: theme.muted }}
+        >
+          Loading quiz...
+        </div>
       </div>
     );
   }
 
   if (error && questions.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-4" style={{ background: theme.pageBg }}>
-        <p style={{ color: theme.body }}>{error}</p>
-        <button type="button" onClick={onBack} className="px-4 py-2 rounded-lg" style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body }}>
-          Go back
-        </button>
+      <div style={{ background: theme.pageBg, minHeight: "100svh" }}>
+        <PlanningBackHeader onBack={onBack} />
+        <div
+          className="flex flex-col items-center justify-center gap-4 px-4"
+          style={{ minHeight: `calc(100svh - ${PLANNING_HEADER_HEIGHT_PX}px)` }}
+        >
+          <p style={{ color: theme.body }}>{error}</p>
+          <button type="button" onClick={onBack} className="px-4 py-2 rounded-lg" style={{ background: theme.optionBg, border: `1px solid ${theme.border}`, color: theme.body }}>
+            Go back
+          </button>
+        </div>
       </div>
     );
   }
@@ -72,7 +85,6 @@ export default function QuizPage({ onComplete, onBack, onNavigate }: QuizPagePro
         stepLabel="Trip logistics"
         finalButtonLabel="Continue to Preferences"
         onBack={onBack}
-        onNavigate={onNavigate}
         onComplete={handleComplete}
         submitting={submitting}
       />

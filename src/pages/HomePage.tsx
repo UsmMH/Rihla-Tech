@@ -12,6 +12,7 @@ import PreferencesPage from "@/pages/PreferencesPage";
 import ProfilePage from "@/pages/ProfilePage";
 import QuizPage from "@/pages/QuizPage";
 import TripResult from "@/pages/TripResult";
+import type { TripPlan } from "@/lib/quiz";
 import type { AppTab } from "@/lib/navigation";
 import { clearLastPage, clearLastTripId, saveLastTripId } from "@/lib/trips";
 
@@ -38,6 +39,7 @@ function tabToPage(tab: AppTab): TripPage {
 function TripPlanner() {
   const [page, setPage] = useState<TripPage>("home");
   const [tripPlanId, setTripPlanId] = useState<number | null>(null);
+  const [pendingTripPlan, setPendingTripPlan] = useState<TripPlan | null>(null);
   const [communityTripId, setCommunityTripId] = useState<number | null>(null);
 
   function goToAppHome() {
@@ -65,6 +67,7 @@ function TripPlanner() {
 
   function startNewTrip() {
     setTripPlanId(null);
+    setPendingTripPlan(null);
     clearLastTripId();
     setPage("quiz");
   }
@@ -141,8 +144,9 @@ function TripPlanner() {
 
       {page === "quiz" && (
         <QuizPage
-          onComplete={(id) => {
+          onComplete={(id, tripPlan) => {
             setTripPlanId(id);
+            setPendingTripPlan(tripPlan);
             saveLastTripId(id);
             setPage("preferences");
           }}
@@ -154,6 +158,9 @@ function TripPlanner() {
       {page === "preferences" && tripPlanId !== null && (
         <PreferencesPage
           tripPlanId={tripPlanId}
+          needsDestinationPicker={
+            pendingTripPlan ? !pendingTripPlan.destination_known && !pendingTripPlan.destination : false
+          }
           onComplete={(id, needsSuggestion) => {
             setTripPlanId(id);
             saveLastTripId(id);

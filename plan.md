@@ -1,7 +1,7 @@
 # RihlaTech — Development Plan & Handoff
 
 > **Purpose:** Continue development in a new chat without losing context.  
-> **Last updated:** July 2026 · **Phases 0–7b committed & pushed** · **Next: Phase 8 (Admin + deploy)**
+> **Last updated:** July 2026 · **Phases 0–8 deployed** · **Refinements + Quiz redesign done** · **Next: Nice to have (or polish backlog)**
 
 ---
 
@@ -23,7 +23,7 @@
 | Backend | FastAPI + SQLAlchemy | `backend/app/` |
 | Database | PostgreSQL 16 (Docker) | Port **5433** (5432 conflicts with local Windows Postgres) |
 | Auth | JWT (python-jose) + bcrypt | 7-day token expiry |
-| AI / LLM | `backend/app/services/llm.py` | **Gemini** (dev default), **OpenRouter**, or **OpenAI**; set `LLM_PROVIDER` in `.env` |
+| AI / LLM | `backend/app/services/llm.py` | **Gemini**, **OpenRouter** (dev default), or **OpenAI**; set `LLM_PROVIDER` in `.env` |
 | Maps / Geocoding | **Mapbox** (backend) + **Google Maps deep-links** (result page) | City autocomplete + Search Box POI on backend; no Google SDK |
 | Flights | **Duffel** sandbox + mock/deep-link fallback | Phase 6 |
 | Hotels | Mock cards + **Booking.com deep-links** (no RapidAPI) | Phase 6 |
@@ -90,7 +90,7 @@ Rihla-Tech/
 ├── backend/app/
 │   ├── main.py
 │   ├── models/
-│   ├── routers/          auth, quiz, trips, places, chat, community, health
+│   ├── routers/          auth, quiz, trips, places, chat, community, admin, health
 │   ├── services/
 │   │   ├── llm.py, itinerary.py, destinations.py, geocoding.py
 │   │   ├── flights.py, hotels.py          # Phase 6
@@ -104,7 +104,10 @@ Rihla-Tech/
 │   │   ├── layout/       Navbar, AppBottomNav
 │   │   ├── auth/         AuthLayout (light mode)
 │   │   └── trip/         QuestionFlow, OriginCityInput, ChatbotSidebar
-│   └── lib/trips.ts, community.ts, quizValidation.ts, places.ts, mapDirections.ts
+│   └── lib/trips.ts, community.ts, quizValidation.ts, places.ts, mapDirections.ts, admin.ts, pwa.ts
+├── public/               manifest.json, sw.js, rihlatech-logo.png (PWA)
+├── vercel.json           Frontend-only Vite deploy
+├── render.yaml           Backend deploy (Render)
 ├── plan.md
 └── README.md
 ```
@@ -131,6 +134,8 @@ Community → Discover feed / Saved bookmarks
 App nav (mobile): Home · My Trips · Community | Profile icon (top-right)
 App nav (desktop): Home · My Trips · Community · Profile
 ```
+
+**Quiz steps (when destination known):** destination_known → dates → destination → include flights? → [airport origin if yes] → travelers → preferences → result.
 
 **Session behavior:**
 - Login / app open → always lands on **Home** (not last trip page)
@@ -177,7 +182,7 @@ App nav (desktop): Home · My Trips · Community · Profile
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/places/search?q=` | City autocomplete (origin/destination) |
+| GET | `/api/places/search?q=&kind=city\|airport` | City autocomplete (destination) or airport autocomplete (origin when flights=yes) |
 | GET | `/api/places/search-poi?q=&trip_plan_id=` | POI search (Search Box) |
 
 ### Chat (Phase 5 + 5b)
@@ -272,31 +277,30 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 
 ---
 
-## Current priority — Phase 8: Admin + deployment
+## Current priority — Refinements & polish
 
-**In progress (local):**
+Phase 8 (admin + deploy + PWA) is **done**. **High + Medium refinements** and **Quiz Flow Redesign** are **done**.
+
+**Where we are:** Core FYP feature set is complete and deployed. Remaining work is optional polish (Nice to have) or backlog items below.
+
+**Next (pick one):**
+1. **Polish backlog** — flight/hotel per-card links, hotel names, multi-city trips (see below).
+2. **Nationality/passport question** — Nice to have (Images API deferred).
+3. **Deploy** — push to GitHub → Vercel/Render when ready (this session).
+
+Fix **one item at a time**; mark `[x]` when done.
+
+---
+
+## Phase 8 — Admin + deployment ✅
+
 - [x] Admin API (`/api/admin/*`) — stats, users, trips, unshare, delete
 - [x] Admin dashboard UI (Profile → Admin dashboard, `is_admin` only)
 - [x] `promote_admin.py` script
-- [x] Deploy configs: `render.yaml`, `vercel.json`, `.env.example` updates
-- [ ] Deploy to Render + Neon + Vercel (manual steps below)
-- [ ] Smoke-test on production URL
-
-### Deploy checklist (Vercel + Render + Neon)
-
-1. **Neon** — create Postgres DB; copy `DATABASE_URL` (use `?sslmode=require` if needed).
-2. **Render** — New Web Service from repo; apply `render.yaml` or set:
-   - Root: `backend`
-   - Build: `pip install -r requirements.txt`
-   - Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - Env: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, LLM/Mapbox/Duffel keys
-3. **Promote admin** (after first register on prod):  
-   `python scripts/promote_admin.py your@email.com` (Render shell or locally with prod `DATABASE_URL`)
-4. **Vercel** — import repo; framework Vite; env:
-   - `VITE_API_BASE_URL=https://<render-service>.onrender.com/api`
-   - `VITE_MAPBOX_ACCESS_TOKEN` (optional)
-5. **Render** — set `CORS_ORIGINS` to your Vercel URL (e.g. `https://rihlatech.vercel.app`).
-6. **Smoke test** — register → quiz → generate → community → admin panel.
+- [x] Deploy configs: `render.yaml`, `vercel.json`, `.vercelignore`, `.env.example`
+- [x] Deployed: **Vercel** (frontend) + **Render** (API) + **Neon** (Postgres 16)
+- [x] PWA: `public/manifest.json`, `public/sw.js`, mobile meta tags in `index.html`
+- [x] Production smoke-tested (login, quiz, generate, community, admin)
 
 ### Admin API
 
@@ -309,7 +313,123 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 | DELETE | `/api/admin/trips/{id}` | Delete any trip |
 | DELETE | `/api/admin/trips/{id}/share` | Unshare (moderation) |
 
-**Local admin:** `cd backend && .\.venv\Scripts\python scripts\promote_admin.py you@example.com`
+**Promote admin:** `cd backend && .\.venv\Scripts\python scripts\promote_admin.py you@example.com`
+
+---
+
+## Refinements & Known Issues
+
+Fix **one item at a time**; mark `[x]` when done; note what changed inline or in git commit.
+
+### High priority
+
+- [x] **Credentials validation (email & password format)** — frontend + backend.  
+  *Files:* `src/pages/LoginPage.tsx`, `RegisterPage.tsx`, `backend/app/schemas/user.py`, `backend/app/services/auth.py`  
+  *Done:* `credentialsValidation.ts` + `auth.py` — email format + trim/lowercase; register password ≥8 chars, letter + number; mirrored in Pydantic validators. **Follow-up:** stricter TLD rule (reject `user@domain.co`-style typos; require 3+ char TLD unless multi-part domain like `.co.uk`).
+
+- [x] **Remove unnecessary developer notes visible to users** — scan UI copy for TODOs, debug text, internal labels.  
+  *Files:* grep `TODO`, `debug`, `developer` in `src/`  
+  *Done:* Removed LLM provider badges (Gemini/OpenRouter/Duffel), technical `fallback_reason` text, and sandbox labels from destination picker + trip result.
+
+- [x] **Destination button wrong when destination already known** — still shows "Find my destination"; fix label/navigation logic.  
+  *Files:* `PreferencesPage.tsx`, `DestinationPickerPage.tsx`, quiz flow in `HomePage.tsx`  
+  *Done:* Preferences final button shows "Generate My Itinerary" when destination was set in quiz; "Find My Destination" only for "not sure" path.
+
+- [x] **Show/hide password toggle** on login and register.  
+  *Files:* `LoginPage.tsx`, `RegisterPage.tsx`, `AuthLayout.tsx`  
+  *Done:* Shared `PasswordField` component with eye toggle on both auth forms.
+
+- [x] **Clarify flight/hotel cost** — per person vs total on result cards.  
+  *Files:* `TripResult.tsx`, flight/hotel card sections, `backend/app/services/flights.py`, `hotels.py`  
+  *Done:* `price_note` on offers — Duffel = total for all travelers; mock flights = est. per person; hotels = per room per night + guest count.
+
+- [x] **Wrong loading copy when reopening saved trip** — shows "Generating Your AI Itinerary"; should say "Loading your trip" when trip already exists.  
+  *Files:* `TripResult.tsx` (`GET /trips/{id}` path vs `POST /trips/generate` path)  
+  *Done:* `loadingPhase` — "Loading your trip..." on fetch; generation copy only when calling `POST /trips/generate`.
+
+- [x] **Partial generation failures** — if flights/hotels load but itinerary is empty, show clear error + retry button (or auto-retry once before error).  
+  *Files:* `TripResult.tsx`, `src/lib/trips.ts`  
+  *Done:* `tripHasItineraryActivities()` + auto-retry once on generate; inline error + "Retry itinerary" when days stay empty.
+
+### Medium priority
+
+- [x] **Local trips (origin = destination)** — **superseded** by Quiz Flow Redesign.  
+  *Origin skipped when flights not included; airport origin uses `cities_conflict()` when flights=yes.*
+
+- [x] **Hide profile / distracting UI during trip planning flow** — quiz, preferences, destination picker, generating.  
+  *Files:* `Navbar.tsx`, `QuestionFlow.tsx`, `QuizPage.tsx`, `PreferencesPage.tsx`  
+  *Done:* `PlanningBackHeader` — back arrow only on quiz, preferences, destination picker, and trip result until itinerary has activities; full navbar returns after.
+
+- [x] **Center and improve loading animation** during AI generation.  
+  *Files:* `TripResult.tsx`, possibly shared loading component  
+  *Done:* `TripPlanningLoader` — centered dual-ring animation + logo pulse; used on trip result loading/generating screen.
+
+- [x] **Fix share button placement** on trip result.  
+  *Files:* `TripResult.tsx`  
+  *Done:* Share moved to top bar (opposite My Trips); Ask AI stays desktop hero + mobile floating bar.
+
+- [x] **Make preferences questions more dynamic and varied** — reduce repetition vs quiz phase.  
+  *Files:* `backend/app/data/quiz_seed.py`, `QuestionFlow.tsx`, preferences API  
+  *Done:* Added pace + multi-select interests; merged flights/hotels into optional `travel_extras`; refreshed copy; seed upserts preferences on restart.
+
+### Nice to have
+
+- [x] **Remove "Suggested Cities" label** in city search UI.  
+  *Files:* `OriginCityInput.tsx` or related search components  
+  *Done:* Removed suggestions header; dropdown shows city rows only.
+
+- [x] **Add airports to origin search** (Duffel + Mapbox Search Box).  
+  *Files:* `backend/app/services/flights.py`, `geocoding.py`, `place_labels.py`, `routers/places.py`, `OriginCityInput.tsx`  
+  *Done:* `/places/search?kind=airport` on origin step; **Duffel** `/places/suggestions` primary (handles `RUH`, `King kh`); Mapbox Search Box `poi_category=airport` fallback; IATA in label; `cities_conflict()` blocks same-city departures; cross-field validation on origin step. **Follow-up fixed:** Google Flights deep-link now uses IATA codes + `through` return date (`flights.py`).
+
+- [ ] **Images API** (Pexels preferred) for trip result / destination visuals.  
+  *Deferred per user; needs `PEXELS_API_KEY` in env.*
+
+- [ ] **Nationality/passport question** for visa limitation awareness in quiz/preferences.  
+  *Files:* quiz seed, `QuestionFlow`, backend quiz models — **next Nice to have if continuing.*
+
+---
+
+## Quiz Flow Redesign ✅
+
+- [x] **Conditional origin question** — only ask for origin if the user wants flight suggestions. Flow: Destination → "Include flights?" → Yes: airport origin / No: skip origin entirely.  
+  *Done:* `include_flights` quiz step; origin hidden when "No flights needed"; preferences `travel_extras` = hotels only; backend clears origin when flights declined.
+
+- [x] **Mapbox city normalization** — store destination cities as `"City, Country"`; dedupe `Al-Riyadh` → `Riyadh`.  
+  *Done:* `_normalize_city_label()` in `geocoding.py`; used in `/places/search?kind=city`.
+
+---
+
+## Polish backlog (not scheduled)
+
+- [ ] **Multi-city / multi-country trips** — support users who want to visit multiple cities in one country or across countries in a single trip (quiz UX, itinerary structure, flights/hotels per leg). *Product decision needed: one trip vs linked sub-trips.*
+- [ ] **Fix hotel card names and Booking.com links** — mock hotels reuse similar names; each card’s link currently goes to the same generic search URL instead of a distinct property/search.
+- [ ] **Fix flight card booking links** — individual flight offers share the same Google Flights URL; each card should deep-link to a route-appropriate search (or offer-specific when available).
+- [ ] **Combine hotels + flights booking question** — optional single preferences step ("Booking links") instead of flights in quiz + hotels in preferences. User undecided; low priority.
+- [ ] **Email validation edge cases** — e.g. `email123@gmail.cos` still passes; stricter TLD/format rules.
+- [ ] **Destination picker TBD bug** — if user exists during AI destination suggestion, destination may be set TBD; "try again" can ask to add destination confusingly.
+
+## Deferred (not in refinement sprint)
+
+- [ ] Desktop home/dashboard wide-screen layout
+- [ ] Persist consult chat server-side
+- [ ] `/welcome` marketing route
+
+---
+
+## Phase 8 archive — deploy checklist
+
+<details>
+<summary>Vercel + Render + Neon (completed)</summary>
+
+1. **Neon** — Postgres 16; `DATABASE_URL` on Render
+2. **Render** — `render.yaml`, root `backend/`, health `/api/health`
+3. **Vercel** — `vercel.json`, `VITE_API_BASE_URL=https://<api>.onrender.com/api`
+4. **Render** — `CORS_ORIGINS` = Vercel URL
+5. **Promote admin** on prod via `promote_admin.py`
+6. Test all fixes locally first (localhost:5173 + localhost:8000). After we verify, we push to GitHub when ready to deploy.
+
+</details>
 
 ---
 
@@ -325,7 +445,9 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 6b. Trip result UX + auth light mode + nav polish ✅  
 7. Community ✅  
 7b. Quiz validation + mobile/nav polish ✅  
-8. Admin  
+8. Admin + deploy + PWA ✅  
+9. **Refinements** — done (High/Medium + quiz redesign + airport search)  
+10. **Nice to have** — nationality question, Images API (deferred)
 
 ---
 
@@ -344,15 +466,21 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 11. **Typecheck:** `npm run typecheck` needs `typescript` in devDependencies.
 12. **Itinerary speed:** `POST /trips/generate` is LLM-bound; Mapbox geocoding runs in background on result page via `enrich-places`.
 13. **Flights/hotels:** Loaded after itinerary appears (Duffel can be slow; does not block generate spinner).
-14. **Quiz validation:** City must be picked from suggestions when Mapbox returns matches; backend re-validates on submit.
+14. **Quiz validation:** City/airport must be picked from suggestions when API returns matches; backend re-validates on submit.
+15. **Airport search:** Uses **Duffel** `places/suggestions` (needs `DUFFEL_ACCESS_TOKEN`); Mapbox Search Box airport POI as fallback. Mapbox Geocoding v5 `types=poi` does **not** return airports — do not use for origin.
+16. **Quiz re-seed:** Restart backend after pull so `include_flights`, origin copy, and preferences questions update.
+17. **Google Flights link:** Built with IATA codes when available — `Flights from RUH to CDG on YYYY-MM-DD through YYYY-MM-DD`.
 
 ---
 
 ## Handoff — start here in next chat
 
-1. **Phase 8 — Admin + deployment** — dashboard, cloud hosting (Vercel + Render + Neon pattern).
+1. **Next feature:** Polish backlog — start with **flight/hotel per-card links** or **multi-city trips** (user priority); else nationality question.
+2. **Quiz + airports:** Done — Duffel airport search; Google Flights route URL uses IATA codes.
+3. **Restart backend** after pull (quiz seed).
+4. Do not git commit unless user says to.
 
-2. **Optional polish** — desktop wide-screen home; persist consult chat server-side; `/welcome` marketing route.
+**Recent session (July 2026):** Quiz redesign, Duffel airport origin, refinements, README + plan update, pushed to GitHub.
 
 ---
 
@@ -362,29 +490,33 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 I'm working on RihlaTech — AI travel planning web app (KSU IS498 capstone).
 Read plan.md and README.md first; plan.md is the source of truth.
 
-Repo: UsmMH/Rihla-Tech
-Stack: React 18 + Vite + Tailwind + FastAPI + PostgreSQL (Docker 5433) + Gemini/Duffel/Mapbox
+Repo: UsmMH/Rihla-Tech (main)
+Stack: React 18 + Vite + Tailwind + FastAPI + PostgreSQL 16 + Gemini/Duffel/Mapbox
+Deployed: Vercel (frontend) + Render (API) + Neon (DB). PWA enabled.
 
-Done (Phases 0–7 committed on main):
-- Community: share trips, Discover/Saved feed, vote, save, comment
-- Duffel flights + mock hotels; collapsible trip result; Google Maps deep-links
-- App shell: Home · My Trips · Community; light auth; consult chat
+Done: Phases 0–8 + all Refinements + Quiz Flow Redesign + airport origin (Duffel).
 
-Local / uncommitted polish (Phase 7b):
-- Quiz & preferences validation (cities, dates max 14 nights, travelers, origin ≠ destination)
-- Mobile quiz layout fix; desktop nav (centered tabs, Profile right)
-- Faster generate: geocoding runs in background on result page
+CURRENT WORK: Polish backlog in plan.md (priority order):
+1. Fix flight card links (each offer → distinct Google Flights deep-link)
+2. Fix hotel names + Booking.com links (per-card)
+3. Multi-city / multi-country trip support (product design first)
+- One fix at a time; mark [x] in plan.md when done.
 
-NEXT: Commit 7b if needed → Phase 8 (admin + deploy)
+Also Nice to have: Nationality question (Images API deferred).
+
+Polish backlog: email validation, destination-picker TBD bug, combine hotels+flights step.
 
 Constraints:
 - No Google Maps SDK; deep-links OK
 - No RapidAPI hotel scrapers
 - Don't commit .env, .phase5-backup/, node_modules/, backend/.venv/
 - Ask before git commit unless I say to commit
+- Minimal scope per fix; match existing code style
 
-Key files: plan.md, src/lib/quizValidation.ts, backend/app/services/quiz_validation.py,
-src/components/trip/QuestionFlow.tsx, src/pages/TripResult.tsx
+Notes:
+- Origin airport search = Duffel primary; needs DUFFEL_ACCESS_TOKEN
+- Flights=no skips origin; hotels optional in preferences travel_extras
+- Restart backend after pull for quiz seed
 ```
 
 ---

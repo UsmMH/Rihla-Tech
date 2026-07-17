@@ -8,7 +8,8 @@ from datetime import date
 from fastapi import HTTPException, status
 
 from app.models.question import Question
-from app.services.geocoding import mapbox_configured, search_places
+from app.services.geocoding import mapbox_configured, search_airports, search_places
+from app.services.place_labels import cities_conflict
 
 MAX_TRIP_NIGHTS = 14
 MAX_TRAVELERS_TOTAL = 20
@@ -21,10 +22,14 @@ CITY_PATTERN = re.compile(r"^[\w\s,'.\-()]+$", re.UNICODE)
 def _city_label_matches(query: str, label: str) -> bool:
     q = query.strip().lower()
     lab = label.strip().lower()
-    return q == lab or q in lab or lab in q
+    if q == lab or q in lab or lab in q:
+        return True
+    if len(q) == 3 and q.isalpha():
+        return f"({q.upper()})" in label.upper()
+    return False
 
 
-def validate_city_name(value: str, *, field: str) -> str:
+def validate_city_name(value: str, *, field: str, kind: str = "city") -> str:
     cleaned = value.strip()
     if len(cleaned) < MIN_CITY_LENGTH:
         raise HTTPException(
@@ -42,7 +47,14 @@ def validate_city_name(value: str, *, field: str) -> str:
             detail=f"{field} contains invalid characters.",
         )
 
-    if mapbox_configured():
+    if kind == "airport":
+        results = search_airports(cleaned, limit=8)
+        if results and not any(_city_label_matches(cleaned, r["label"]) for r in results):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not verify {field.lower()}. Pick an airport from search suggestions.",
+            )
+    elif mapbox_configured():
         results = search_places(cleaned, limit=8)
         if results and not any(_city_label_matches(cleaned, r["label"]) for r in results):
             raise HTTPException(
@@ -119,8 +131,12 @@ def validate_choice(question: Question, value) -> str | list[str]:
     allowed = {opt.option_key for opt in question.options}
 
     if question.multi:
-        if not isinstance(value, list) or not value:
+        if not isinstance(value, list):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid selection.")
+        if question.key != "travel_extras" and not value:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select at least one option.")
+        if question.key == "theme" and len(value) > 2:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Pick up to 2 interests.")
         if any(v not in allowed for v in value):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid selection.")
         return value
@@ -151,7 +167,9 @@ def validate_answer(question: Question, value) -> None:
         if not isinstance(value, str):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid text answer.")
         if question.key in ("origin", "destination"):
-            validate_city_name(value, field="Origin" if question.key == "origin" else "Destination")
+            kind = "airport" if question.key == "origin" else "city"
+            field = "Departure airport" if question.key == "origin" else "Destination"
+            validate_city_name(value, field=field, kind=kind)
         elif not value.strip():
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Answer cannot be empty.")
 
@@ -170,9 +188,13 @@ def validate_quiz_submission(
         validate_answer(question, value)
 
     if phase == "quiz":
-        required = {"destination_known", "dates", "travelers", "origin"}
+        required = {"destination_known", "dates", "travelers", "include_flights"}
         if answers_by_key.get("destination_known") != "not_sure":
             required.add("destination")
+
+        wants_flights = answers_by_key.get("include_flights") == "yes"
+        if wants_flights:
+            required.add("origin")
 
         missing = required - set(answers_by_key.keys())
         if missing:
@@ -181,20 +203,21 @@ def validate_quiz_submission(
                 detail="Please complete all quiz steps before continuing.",
             )
 
-        origin = answers_by_key.get("origin")
-        destination = answers_by_key.get("destination")
-        if (
-            isinstance(origin, str)
-            and isinstance(destination, str)
-            and origin.strip().lower() == destination.strip().lower()
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Origin and destination must be different cities.",
-            )
+        if wants_flights:
+            origin = answers_by_key.get("origin")
+            destination = answers_by_key.get("destination")
+            if (
+                isinstance(origin, str)
+                and isinstance(destination, str)
+                and cities_conflict(origin, destination)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Departure airport must serve a different city than your destination.",
+                )
 
     elif phase == "preferences":
-        required = {"trip_purpose", "theme", "budget_tier", "include_flights", "include_hotels"}
+        required = {"trip_purpose", "pace", "theme", "budget_tier", "travel_extras"}
         missing = required - set(answers_by_key.keys())
         if missing:
             raise HTTPException(

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import { Building2, ChevronDown, ChevronLeft, ExternalLink, MapPin, Plane, Route, Share2, X } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
+import PlanningBackHeader, { PLANNING_HEADER_HEIGHT_PX } from "@/components/layout/PlanningBackHeader";
+import TripPlanningLoader from "@/components/trip/TripPlanningLoader";
 import ChatbotSidebar from "@/components/trip/ChatbotSidebar";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
@@ -12,7 +14,7 @@ import {
   googleMapsSearchUrl,
 } from "@/lib/mapDirections";
 import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
-import { enrichTripPlaces, generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
+import { enrichTripPlaces, generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, tripHasItineraryActivities, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
 import { shareTrip, unshareTrip } from "@/lib/community";
 import type { AppTab } from "@/lib/navigation";
 
@@ -21,14 +23,6 @@ type TripResultProps = {
   onBack: () => void;
   onNavigate?: (tab: AppTab) => void;
 };
-
-function sourceLabel(source: string): string {
-  if (source === "gemini") return "Gemini";
-  if (source === "openrouter") return "OpenRouter";
-  if (source === "openai") return "OpenAI";
-  if (source === "duffel") return "Duffel";
-  return "Demo";
-}
 
 function stopsLabel(stops: number): string {
   if (stops <= 0) return "Nonstop";
@@ -48,15 +42,20 @@ function flightsSummary(flights: FlightsResult): string {
     .filter((p): p is number => p != null);
   const cheapest = prices.length ? Math.min(...prices) : null;
   const prefix = count === 1 ? "1 option" : `${count} options`;
-  return cheapest != null ? `${prefix} · from ${flights.offers[0]?.currency ?? "USD"} ${cheapest}` : prefix;
+  const basis = flights.offers[0]?.price_note;
+  const pricePart = cheapest != null ? `from ${flights.offers[0]?.currency ?? "USD"} ${cheapest}` : "";
+  if (!pricePart) return prefix;
+  return basis ? `${prefix} · ${pricePart} (${basis.toLowerCase()})` : `${prefix} · ${pricePart}`;
 }
 
 function hotelsSummary(hotels: HotelsResult): string {
   const count = hotels.hotels.length;
   if (count === 0) return "No stays found";
   const cheapest = hotels.hotels[0]?.price_per_night ?? "";
+  const basis = hotels.hotels[0]?.price_note;
   const prefix = count === 1 ? "1 stay" : `${count} stays`;
-  return cheapest ? `${prefix} · ${cheapest}` : prefix;
+  if (!cheapest) return prefix;
+  return basis ? `${prefix} · ${cheapest} (${basis.toLowerCase()})` : `${prefix} · ${cheapest}`;
 }
 
 function daySummary(dayPlan: DayItinerary): string {
@@ -161,14 +160,19 @@ function FlightOfferCard({ offer, theme }: { offer: FlightOffer; theme: ReturnTy
       className="rounded-xl p-3.5 flex flex-col flex-shrink-0 snap-start w-[min(85vw,280px)]"
       style={{ background: theme.activityCardBg, border: `1px solid ${theme.activityCardBorder}` }}
     >
-      <div className="flex items-start justify-between gap-2 mb-2">
+      <div className="flex items-start justify-between gap-2 mb-1">
         <p style={{ fontFamily: "'DM Serif Display', serif", color: theme.activityHeading, fontSize: "0.95rem", lineHeight: 1.2 }}>
           {offer.airline}
         </p>
-        <span style={{ color: theme.accentSky, fontWeight: 700, fontSize: "0.85rem", fontFamily: "system-ui, sans-serif", flexShrink: 0 }}>
+        <span style={{ color: theme.accentSky, fontWeight: 700, fontSize: "0.85rem", fontFamily: "system-ui, sans-serif", flexShrink: 0, textAlign: "right" }}>
           {offer.price}
         </span>
       </div>
+      {offer.price_note && (
+        <p style={{ color: theme.muted, fontSize: "0.65rem", fontFamily: "system-ui, sans-serif", marginBottom: 8, textAlign: "right" }}>
+          {offer.price_note}
+        </p>
+      )}
       <p style={{ color: theme.muted, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>
         {offer.outbound.origin_code || offer.outbound.origin} → {offer.outbound.destination_code || offer.outbound.destination}
         {offer.inbound ? " · round trip" : ""}
@@ -310,27 +314,66 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   const [flightsLoading, setFlightsLoading] = useState(false);
   const [hotelsLoading, setHotelsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingPhase, setLoadingPhase] = useState<"fetch" | "generate">("fetch");
   const [error, setError] = useState<string | null>(null);
+  const [itineraryError, setItineraryError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareCaption, setShareCaption] = useState("");
   const [shareBusy, setShareBusy] = useState(false);
   const enrichStarted = useRef(false);
+  const itineraryRetryRef = useRef(0);
 
-  const loadItinerary = useCallback(async () => {
+  const loadItinerary = useCallback(async (options?: { forceGenerate?: boolean }) => {
     setLoading(true);
     setError(null);
+    setItineraryError(null);
+    itineraryRetryRef.current = 0;
+
     try {
-      try {
-        const existing = await getTrip(tripPlanId);
-        setTrip(existing);
-        return;
-      } catch (err: unknown) {
-        if (!(err instanceof ApiError) || err.status !== 404) {
-          throw err;
+      if (!options?.forceGenerate) {
+        setLoadingPhase("fetch");
+        try {
+          const existing = await getTrip(tripPlanId);
+          if (tripHasItineraryActivities(existing)) {
+            setTrip(existing);
+            return;
+          }
+        } catch (err: unknown) {
+          if (!(err instanceof ApiError) || err.status !== 404) {
+            throw err;
+          }
         }
       }
+
+      setLoadingPhase("generate");
+      let result = await generateTrip(tripPlanId);
+      if (!tripHasItineraryActivities(result) && itineraryRetryRef.current < 1) {
+        itineraryRetryRef.current += 1;
+        result = await generateTrip(tripPlanId);
+      }
+
+      setTrip(result);
+      if (!tripHasItineraryActivities(result)) {
+        setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
+      }
+    } catch (err: unknown) {
+      setError(err instanceof ApiError ? err.message : "Failed to load trip");
+    } finally {
+      setLoading(false);
+    }
+  }, [tripPlanId]);
+
+  const retryItineraryGeneration = useCallback(async () => {
+    setItineraryError(null);
+    setLoading(true);
+    setLoadingPhase("generate");
+    setError(null);
+    try {
       const result = await generateTrip(tripPlanId);
       setTrip(result);
+      if (!tripHasItineraryActivities(result)) {
+        setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
+      }
     } catch (err: unknown) {
       setError(err instanceof ApiError ? err.message : "Failed to generate itinerary");
     } finally {
@@ -414,20 +457,12 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
 
   if (loading) {
     return (
-      <div style={{ background: theme.pageBg, minHeight: "100vh" }}>
-        <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
-        <div className="flex flex-col items-center justify-center px-4" style={{ minHeight: "70vh", color: theme.muted }}>
-          <div
-            className="w-10 h-10 rounded-full border-2 border-t-transparent animate-spin mb-4"
-            style={{ borderColor: theme.accentSky, borderTopColor: "transparent" }}
-          />
-          <p style={{ fontFamily: "system-ui, sans-serif", fontSize: "0.95rem" }}>
-            Generating your AI itinerary...
-          </p>
-          <p style={{ fontFamily: "system-ui, sans-serif", fontSize: "0.8rem", marginTop: 8, color: theme.faint }}>
-            This can take up to a minute with AI.
-          </p>
-        </div>
+      <div className="min-h-screen flex flex-col" style={{ background: theme.pageBg }}>
+        <PlanningBackHeader onBack={onBack} />
+        <TripPlanningLoader
+          title={loadingPhase === "fetch" ? "Loading your trip..." : "Generating your AI itinerary..."}
+          subtitle={loadingPhase === "generate" ? "This can take up to a minute while we build your personalized plan." : undefined}
+        />
       </div>
     );
   }
@@ -435,8 +470,11 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   if (error || !trip) {
     return (
       <div style={{ background: theme.pageBg, minHeight: "100vh" }}>
-        <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
-        <div className="flex flex-col items-center justify-center gap-4 px-4" style={{ minHeight: "70vh" }}>
+        <PlanningBackHeader onBack={onBack} />
+        <div
+          className="flex flex-col items-center justify-center gap-4 px-4"
+          style={{ minHeight: `calc(100vh - ${PLANNING_HEADER_HEIGHT_PX}px)` }}
+        >
           <p style={{ color: theme.body, fontFamily: "system-ui, sans-serif", textAlign: "center" }}>
             {error ?? "Something went wrong"}
           </p>
@@ -463,9 +501,16 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
     );
   }
 
+  const showAppNav = tripHasItineraryActivities(trip);
+  const headerOffset = showAppNav ? 60 : PLANNING_HEADER_HEIGHT_PX;
+
   return (
     <div style={{ background: theme.pageBg, minHeight: "100vh", transition: "background 0.3s" }}>
-      <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
+      {showAppNav ? (
+        <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
+      ) : (
+        <PlanningBackHeader onBack={onBack} />
+      )}
 
       <div
         className="relative"
@@ -474,20 +519,40 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
             ? "linear-gradient(180deg, #0D2A55 0%, #0A1628 100%)"
             : `linear-gradient(180deg, ${theme.sectionAlt} 0%, ${theme.pageBg} 100%)`,
           borderBottom: `1px solid ${theme.border}`,
-          paddingTop: "60px",
+          paddingTop: headerOffset,
           transition: "background 0.3s",
         }}
       >
         <div className="max-w-5xl mx-auto px-4 md:px-6 py-8 md:py-12">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex items-center gap-1.5 mb-5 cursor-pointer min-h-[40px]"
-            style={{ background: "none", border: "none", color: theme.accentSky, fontFamily: "system-ui, sans-serif", fontSize: "0.88rem", fontWeight: 500, padding: 0 }}
-          >
-            <ChevronLeft size={18} strokeWidth={2} />
-            My Trips
-          </button>
+          <div className="flex items-center justify-between gap-3 mb-5">
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1.5 cursor-pointer min-h-[40px]"
+              style={{ background: "none", border: "none", color: theme.accentSky, fontFamily: "system-ui, sans-serif", fontSize: "0.88rem", fontWeight: 500, padding: 0 }}
+            >
+              <ChevronLeft size={18} strokeWidth={2} />
+              My Trips
+            </button>
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+              onClick={openShareModal}
+              className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl cursor-pointer whitespace-nowrap flex-shrink-0 min-h-[40px]"
+              style={{
+                background: trip.is_shared ? "rgba(88, 171, 212, 0.12)" : theme.optionBg,
+                border: `1px solid ${trip.is_shared ? theme.accentSky : theme.border}`,
+                color: trip.is_shared ? theme.accentSky : theme.body,
+                fontFamily: "system-ui, sans-serif",
+                fontSize: "0.82rem",
+                fontWeight: 500,
+                lineHeight: 1,
+              }}
+            >
+              <Share2 size={16} />
+              {trip.is_shared ? "Shared" : "Share"}
+            </motion.button>
+          </div>
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-5">
             <div>
               <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "clamp(1.8rem, 8vw, 3.5rem)", color: theme.heading, lineHeight: 1.1, marginBottom: "0.4rem" }}>
@@ -506,25 +571,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 w-full md:w-auto md:flex-row">
-              <motion.button
-                type="button"
-                whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                onClick={openShareModal}
-                className="inline-flex items-center justify-center gap-2 w-full md:w-auto px-4 py-3 md:py-2.5 rounded-xl cursor-pointer whitespace-nowrap flex-shrink-0 min-h-[44px]"
-                style={{
-                  background: trip.is_shared ? "rgba(88, 171, 212, 0.12)" : theme.optionBg,
-                  border: `1px solid ${trip.is_shared ? theme.accentSky : theme.border}`,
-                  color: trip.is_shared ? theme.accentSky : theme.body,
-                  fontFamily: "system-ui, sans-serif",
-                  fontSize: "0.88rem",
-                  fontWeight: 500,
-                  lineHeight: 1,
-                }}
-              >
-                <Share2 size={16} />
-                {trip.is_shared ? "Shared" : "Share"}
-              </motion.button>
+            <div className="hidden md:flex md:justify-end">
               <motion.button
                 type="button"
                 whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
@@ -532,7 +579,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
                   setChatInitialInput("");
                   setIsChatOpen(true);
                 }}
-                className="hidden md:inline-flex items-center justify-center gap-2 w-full md:w-auto px-4 py-3 md:py-2.5 rounded-xl cursor-pointer whitespace-nowrap flex-shrink-0 min-h-[44px]"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl cursor-pointer whitespace-nowrap flex-shrink-0 min-h-[44px]"
                 style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, border: `1px solid ${theme.border}`, color: "#fff", fontFamily: "system-ui, sans-serif", fontSize: "0.88rem", fontWeight: 500, lineHeight: 1 }}
               >
                 <svg width="14" height="14" viewBox="0 0 15 15" fill="none" className="flex-shrink-0" aria-hidden>
@@ -542,20 +589,6 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
               </motion.button>
             </div>
           </div>
-
-          {trip.source !== "mock" && (
-            <p
-              className="mt-4 rounded-lg px-3 py-2 text-sm inline-block"
-              style={{
-                background: "rgba(88, 171, 212, 0.12)",
-                border: `1px solid ${theme.accentSky}`,
-                color: theme.accentSky,
-                fontFamily: "system-ui, sans-serif",
-              }}
-            >
-              Generated with {sourceLabel(trip.source)}
-            </p>
-          )}
 
           {trip.source === "mock" && (
             <p
@@ -567,8 +600,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
                 fontFamily: "system-ui, sans-serif",
               }}
             >
-              Demo itinerary — AI unavailable
-              {trip.fallback_reason ? `: ${trip.fallback_reason}` : ""}
+              Sample itinerary — personalized planning is temporarily unavailable.
             </p>
           )}
         </div>
@@ -587,23 +619,11 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
                 externalLabel="Search all on Google Flights"
               >
                 {flights && (
-                  <>
-                    {flights.source === "mock" && flights.fallback_reason && (
-                      <p className="mb-3 text-xs" style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}>
-                        Demo prices — {flights.fallback_reason}
-                      </p>
-                    )}
-                    {flights.source === "duffel" && (
-                      <p className="mb-3 text-xs" style={{ color: theme.accentSky, fontFamily: "system-ui, sans-serif" }}>
-                        Live sandbox prices via Duffel
-                      </p>
-                    )}
-                    <HorizontalCardRow>
-                      {flights.offers.map((offer) => (
-                        <FlightOfferCard key={offer.id} offer={offer} theme={theme} />
-                      ))}
-                    </HorizontalCardRow>
-                  </>
+                  <HorizontalCardRow>
+                    {flights.offers.map((offer) => (
+                      <FlightOfferCard key={offer.id} offer={offer} theme={theme} />
+                    ))}
+                  </HorizontalCardRow>
                 )}
               </CollapsiblePanel>
             )}
@@ -637,9 +657,14 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
                           <h3 style={{ fontFamily: "'DM Serif Display', serif", color: theme.activityHeading, fontSize: "0.92rem", lineHeight: 1.25, marginTop: 4 }}>
                             {hotel.name}
                           </h3>
-                          <p style={{ color: theme.accentSky, fontWeight: 600, fontSize: "0.8rem", fontFamily: "system-ui, sans-serif", margin: "6px 0 8px" }}>
+                          <p style={{ color: theme.accentSky, fontWeight: 600, fontSize: "0.8rem", fontFamily: "system-ui, sans-serif", margin: "6px 0 2px" }}>
                             {hotel.price_per_night}
                           </p>
+                          {hotel.price_note && (
+                            <p style={{ color: theme.muted, fontSize: "0.65rem", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>
+                              {hotel.price_note}
+                            </p>
+                          )}
                           <a
                             href={hotel.booking_url}
                             target="_blank"
@@ -673,7 +698,40 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
           Day-by-day itinerary
         </h2>
 
+        {itineraryError && (
+          <div
+            className="mb-6 rounded-xl px-4 py-4"
+            style={{
+              background: "rgba(239, 68, 68, 0.08)",
+              border: "1px solid rgba(239, 68, 68, 0.35)",
+            }}
+          >
+            <p style={{ color: theme.body, fontFamily: "system-ui, sans-serif", fontSize: "0.9rem", marginBottom: 12 }}>
+              {itineraryError}
+            </p>
+            <button
+              type="button"
+              onClick={retryItineraryGeneration}
+              className="px-4 py-2.5 rounded-xl cursor-pointer"
+              style={{
+                background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
+                color: "#fff",
+                border: "none",
+                fontFamily: "system-ui, sans-serif",
+                fontSize: "0.88rem",
+              }}
+            >
+              Retry itinerary
+            </button>
+          </div>
+        )}
+
         <div className="space-y-3">
+          {trip.itinerary.length === 0 && !itineraryError && (
+            <p style={{ color: theme.muted, fontFamily: "system-ui, sans-serif", fontSize: "0.9rem" }}>
+              No activities yet.
+            </p>
+          )}
           {trip.itinerary.map((dayPlan) => {
             const dayActivityNames = dayPlan.activities.map((a) => a.name);
             const dayGoogleRoute = googleMapsDayRouteUrl(dayActivityNames, trip.destination);

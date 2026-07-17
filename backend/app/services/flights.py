@@ -59,10 +59,80 @@ def _looks_like_iata(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z]{3}", value.strip()))
 
 
+def _extract_iata_from_label(label: str) -> str | None:
+    match = re.search(r"\(([A-Za-z]{3})\)", label)
+    if match:
+        return match.group(1).upper()
+    return None
+
+
+def search_airport_suggestions(query: str, *, limit: int = 8) -> list[dict]:
+    """Airport autocomplete via Duffel places API."""
+    cleaned = query.strip()
+    if len(cleaned) < 2 or not duffel_configured():
+        return []
+
+    try:
+        payload = _duffel_request("GET", "/places/suggestions", params={"query": cleaned})
+    except Exception as exc:
+        logger.warning("Duffel airport search failed for %r: %s", cleaned, exc)
+        return []
+
+    from app.services.place_labels import country_name_from_iata
+
+    results: list[dict] = []
+    seen_iata: set[str] = set()
+    for item in payload.get("data") or []:
+        if str(item.get("type") or "").lower() != "airport":
+            continue
+        iata_raw = item.get("iata_code")
+        if not isinstance(iata_raw, str) or not iata_raw:
+            continue
+        iata = iata_raw.upper()
+        if iata in seen_iata:
+            continue
+        seen_iata.add(iata)
+
+        name = str(item.get("name") or "").strip()
+        city = str(item.get("city_name") or "").strip()
+        country = country_name_from_iata(str(item.get("iata_country_code") or ""))
+        display_name = f"{name} ({iata})"
+        if city and country:
+            label = f"{display_name}, {city}, {country}"
+        elif city:
+            label = f"{display_name}, {city}"
+        else:
+            label = display_name
+
+        lat = item.get("latitude")
+        lng = item.get("longitude")
+        if lat is None or lng is None:
+            continue
+
+        results.append(
+            {
+                "label": label,
+                "latitude": float(lat),
+                "longitude": float(lng),
+                "kind": "airport",
+                "iata_code": iata,
+                "city": city or None,
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
 def _resolve_place_code(place_name: str) -> str | None:
     cleaned = place_name.strip()
     if not cleaned:
         return None
+
+    embedded = _extract_iata_from_label(cleaned)
+    if embedded:
+        return embedded
+
     if _looks_like_iata(cleaned):
         return cleaned.upper()
 
@@ -97,18 +167,30 @@ def _default_departure_date(trip: TripPlan) -> date:
 
 
 def _google_flights_url(
-    origin: str,
-    destination: str,
+    origin_code: str | None,
+    destination_code: str | None,
+    origin_label: str,
+    destination_label: str,
     depart: date,
     return_date: date | None,
     adults: int,
 ) -> str:
-    parts = [f"Flights from {origin} to {destination} on {depart.isoformat()}"]
+    origin = (
+        origin_code
+        or _extract_iata_from_label(origin_label)
+        or origin_label.split(",")[0].strip()
+    )
+    destination = (
+        destination_code
+        or _extract_iata_from_label(destination_label)
+        or destination_label.split(",")[0].strip()
+    )
+    query = f"Flights from {origin} to {destination} on {depart.isoformat()}"
     if return_date:
-        parts.append(f"return {return_date.isoformat()}")
+        query += f" through {return_date.isoformat()}"
     if adults > 1:
-        parts.append(f"{adults} adults")
-    return f"https://www.google.com/travel/flights?q={quote(' '.join(parts))}"
+        query += f" {adults} adults"
+    return f"https://www.google.com/travel/flights?q={quote(query)}"
 
 
 def _format_duration(minutes: int | None) -> str | None:
@@ -143,11 +225,25 @@ def _segment_from_duffel_slice(slice_data: dict, origin_label: str, dest_label: 
     )
 
 
+def _traveler_count(trip: TripPlan) -> int:
+    return max(1, trip.num_adults + trip.num_children)
+
+
+def _flight_price_note(trip: TripPlan, *, per_person: bool) -> str:
+    travelers = _traveler_count(trip)
+    if per_person:
+        label = "traveler" if travelers == 1 else "travelers"
+        return f"Est. per person · {travelers} {label}"
+    label = "traveler" if travelers == 1 else "travelers"
+    return f"Total for {travelers} {label}"
+
+
 def _offer_from_duffel(
     offer: dict,
     origin_label: str,
     dest_label: str,
     search_url: str,
+    price_note: str,
 ) -> FlightOfferPublic:
     slices = offer.get("slices") or []
     outbound = _segment_from_duffel_slice(slices[0], origin_label, dest_label) if slices else None
@@ -169,6 +265,7 @@ def _offer_from_duffel(
         id=str(offer.get("id") or ""),
         airline=airline,
         price=price_display,
+        price_note=price_note,
         price_amount=amount,
         currency=currency,
         outbound=outbound
@@ -189,6 +286,7 @@ def _mock_offers(
     origin_code: str,
     dest_code: str,
     search_url: str,
+    price_note: str,
 ) -> list[FlightOfferPublic]:
     origin = trip.origin or origin_code
     destination = trip.destination or dest_code
@@ -207,6 +305,7 @@ def _mock_offers(
                 id=f"mock-{idx}",
                 airline=airline,
                 price=f"USD {price}",
+                price_note=price_note,
                 price_amount=float(price),
                 currency="USD",
                 outbound=FlightSegmentPublic(
@@ -268,16 +367,19 @@ def _search_duffel(
     data = payload.get("data") or {}
     offers = data.get("offers") or []
     search_url = _google_flights_url(
-        trip.origin or origin_code,
-        trip.destination or dest_code,
+        origin_code,
+        dest_code,
+        trip.origin or origin_code or "",
+        trip.destination or dest_code or "",
         depart,
         return_date,
         max(1, trip.num_adults),
     )
     origin_label = trip.origin or origin_code
     dest_label = trip.destination or dest_code
+    price_note = _flight_price_note(trip, per_person=False)
     parsed = [
-        _offer_from_duffel(offer, origin_label, dest_label, search_url)
+        _offer_from_duffel(offer, origin_label, dest_label, search_url, price_note)
         for offer in offers[:MAX_OFFERS]
     ]
     return parsed
@@ -299,7 +401,9 @@ def search_flights(db: Session, user: User, trip_plan_id: int) -> FlightsRespons
     origin_code = _resolve_place_code(origin_name) if origin_name else None
     dest_code = _resolve_place_code(dest_name)
     search_url = _google_flights_url(
-        origin_name or origin_code or "origin",
+        origin_code,
+        dest_code,
+        origin_name,
         dest_name,
         depart,
         return_date,
@@ -308,8 +412,9 @@ def search_flights(db: Session, user: User, trip_plan_id: int) -> FlightsRespons
 
     if not origin_code or not dest_code:
         reason = "Could not resolve airport codes for origin or destination"
+        mock_note = _flight_price_note(trip, per_person=True)
         return FlightsResponse(
-            offers=_mock_offers(trip, origin_code or "RUH", dest_code or "DXB", search_url),
+            offers=_mock_offers(trip, origin_code or "RUH", dest_code or "DXB", search_url, mock_note),
             search_url=search_url,
             source="mock",
             fallback_reason=reason,
@@ -336,8 +441,9 @@ def search_flights(db: Session, user: User, trip_plan_id: int) -> FlightsRespons
     else:
         fallback_reason = "DUFFEL_ACCESS_TOKEN not configured"
 
+    mock_note = _flight_price_note(trip, per_person=True)
     return FlightsResponse(
-        offers=_mock_offers(trip, origin_code, dest_code, search_url),
+        offers=_mock_offers(trip, origin_code, dest_code, search_url, mock_note),
         search_url=search_url,
         source="mock",
         fallback_reason=fallback_reason,

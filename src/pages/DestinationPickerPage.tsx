@@ -1,18 +1,11 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 
-import Navbar from "@/components/layout/Navbar";
+import PlanningBackHeader, { PLANNING_HEADER_HEIGHT_PX } from "@/components/layout/PlanningBackHeader";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api";
 import type { AppTab } from "@/lib/navigation";
 import { selectDestination, suggestDestinations, type DestinationSuggestion } from "@/lib/trips";
-
-function sourceLabel(source: string): string {
-  if (source === "gemini") return "Gemini";
-  if (source === "openrouter") return "OpenRouter";
-  if (source === "openai") return "OpenAI";
-  return "Demo";
-}
 
 type DestinationPickerPageProps = {
   tripPlanId: number;
@@ -21,21 +14,19 @@ type DestinationPickerPageProps = {
   onNavigate?: (tab: AppTab) => void;
 };
 
-export default function DestinationPickerPage({ tripPlanId, onComplete, onBack, onNavigate }: DestinationPickerPageProps) {
+export default function DestinationPickerPage({ tripPlanId, onComplete, onBack }: DestinationPickerPageProps) {
   const { theme } = useTheme();
   const [suggestions, setSuggestions] = useState<DestinationSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [selecting, setSelecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<string | null>(null);
-  const [fallbackReason, setFallbackReason] = useState<string | null>(null);
+  const [showSampleNotice, setShowSampleNotice] = useState(false);
 
   useEffect(() => {
     suggestDestinations(tripPlanId)
       .then((result) => {
         setSuggestions(result.suggestions);
-        setSource(result.source);
-        setFallbackReason(result.fallback_reason);
+        setShowSampleNotice(result.source === "mock");
       })
       .catch((err: unknown) => {
         setError(err instanceof ApiError ? err.message : "Failed to load destination suggestions");
@@ -58,9 +49,12 @@ export default function DestinationPickerPage({ tripPlanId, onComplete, onBack, 
 
   return (
     <div style={{ background: theme.pageBg, minHeight: "100svh" }}>
-      <Navbar variant="app" onHome={onBack} onNavigate={onNavigate} />
+      <PlanningBackHeader onBack={onBack} />
 
-      <div className="flex flex-col items-center px-4" style={{ paddingTop: "88px", paddingBottom: "2rem" }}>
+      <div
+        className="flex flex-col items-center px-4"
+        style={{ paddingTop: PLANNING_HEADER_HEIGHT_PX + 16, paddingBottom: "2rem" }}
+      >
         <div className="w-full max-w-2xl pt-4">
           <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "clamp(1.5rem, 5vw, 2rem)", color: theme.heading, marginBottom: "0.5rem" }}>
             Pick your destination
@@ -73,21 +67,7 @@ export default function DestinationPickerPage({ tripPlanId, onComplete, onBack, 
             <p style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}>Finding perfect destinations...</p>
           )}
 
-          {!loading && source && source !== "mock" && (
-            <p
-              className="mb-4 rounded-lg px-3 py-2 text-sm"
-              style={{
-                background: "rgba(88, 171, 212, 0.12)",
-                border: `1px solid ${theme.accentSky}`,
-                color: theme.accentSky,
-                fontFamily: "system-ui, sans-serif",
-              }}
-            >
-              AI suggestions via {sourceLabel(source)}
-            </p>
-          )}
-
-          {!loading && source === "mock" && (
+          {showSampleNotice && (
             <p
               className="mb-4 rounded-lg px-3 py-2 text-sm"
               style={{
@@ -97,8 +77,7 @@ export default function DestinationPickerPage({ tripPlanId, onComplete, onBack, 
                 fontFamily: "system-ui, sans-serif",
               }}
             >
-              Showing demo destinations — AI unavailable
-              {fallbackReason ? `: ${fallbackReason}` : ""}
+              Showing sample destinations — personalized suggestions are temporarily unavailable.
             </p>
           )}
 

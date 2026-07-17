@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
 import { useTheme } from "@/contexts/ThemeContext";
-import { searchPlaces, type PlaceSearchResult } from "@/lib/places";
-import { validateCityField } from "@/lib/quizValidation";
+import { searchPlaces, type PlaceSearchKind, type PlaceSearchResult } from "@/lib/places";
+import { citiesConflict, validateCityField } from "@/lib/quizValidation";
 
 export type CityInputMeta = {
   confirmedFromList: boolean;
@@ -14,7 +14,8 @@ type OriginCityInputProps = {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  suggestionsTitle?: string;
+  searchKind?: PlaceSearchKind;
+  conflictWith?: string;
   onMetaChange?: (meta: CityInputMeta) => void;
   showValidation?: boolean;
 };
@@ -23,7 +24,8 @@ export default function OriginCityInput({
   value,
   onChange,
   placeholder,
-  suggestionsTitle = "SUGGESTED CITIES",
+  searchKind = "city",
+  conflictWith,
   onMetaChange,
   showValidation = false,
 }: OriginCityInputProps) {
@@ -34,6 +36,7 @@ export default function OriginCityInput({
   const [loading, setLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [searchSettled, setSearchSettled] = useState(false);
+  const [conflictError, setConflictError] = useState<string | null>(null);
 
   useEffect(() => {
     setQuery(value);
@@ -68,7 +71,7 @@ export default function OriginCityInput({
     setSearchSettled(false);
     const timer = window.setTimeout(() => {
       setLoading(true);
-      searchPlaces(query)
+      searchPlaces(query, searchKind)
         .then((results) => {
           setSuggestions(results);
           setOpen(results.length > 0);
@@ -83,9 +86,16 @@ export default function OriginCityInput({
     }, 300);
 
     return () => window.clearTimeout(timer);
-  }, [query, value, confirmed]);
+  }, [query, value, confirmed, searchKind]);
 
   function handleSelect(item: PlaceSearchResult) {
+    if (conflictWith && citiesConflict(item.label, conflictWith)) {
+      setConflictError("Departure airport must serve a different city than your destination.");
+      setConfirmed(false);
+      return;
+    }
+
+    setConflictError(null);
     setConfirmed(true);
     setQuery(item.label);
     onChange(item.label);
@@ -96,7 +106,14 @@ export default function OriginCityInput({
   }
 
   const showSuggestions = open && suggestions.length > 0;
-  const validationError = showValidation && query.trim() ? validateCityField(query, meta) : null;
+  const validationError =
+    conflictError ||
+    (showValidation && query.trim() ? validateCityField(query, meta) : null);
+  const loadingLabel = searchKind === "airport" ? "Searching airports..." : "Searching cities...";
+  const emptyHint =
+    searchKind === "airport"
+      ? "No airports found — try a nearby major city or airport code."
+      : "No matches found — check spelling or try a nearby major city.";
 
   const showInlineHint =
     !loading &&
@@ -113,6 +130,7 @@ export default function OriginCityInput({
         value={query}
         onChange={(e) => {
           setConfirmed(false);
+          setConflictError(null);
           setQuery(e.target.value);
           onChange(e.target.value);
           if (e.target.value.trim().length >= 2) {
@@ -137,7 +155,7 @@ export default function OriginCityInput({
 
       {loading && (
         <p className="mt-2 text-xs" style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}>
-          Searching cities...
+          {loadingLabel}
         </p>
       )}
 
@@ -149,7 +167,7 @@ export default function OriginCityInput({
 
       {showInlineHint && (
         <p className="mt-2 text-xs" style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}>
-          No matches found — check spelling or try a nearby major city.
+          {emptyHint}
         </p>
       )}
 
@@ -162,11 +180,6 @@ export default function OriginCityInput({
             boxShadow: theme.cardShadow,
           }}
         >
-          <div className="px-3 py-2" style={{ borderBottom: `1px solid ${theme.border}` }}>
-            <span style={{ color: theme.muted, fontSize: "0.72rem", fontFamily: "system-ui, sans-serif", letterSpacing: "0.04em" }}>
-              {suggestionsTitle}
-            </span>
-          </div>
           <ul className="max-h-48 overflow-y-auto" style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {suggestions.map((item) => (
               <li key={`${item.label}-${item.latitude}-${item.longitude}`}>
@@ -189,7 +202,9 @@ export default function OriginCityInput({
                     e.currentTarget.style.background = "transparent";
                   }}
                 >
-                  <span style={{ color: theme.accentSky, marginRight: 8 }}>📍</span>
+                  <span style={{ color: theme.accentSky, marginRight: 8 }}>
+                    {searchKind === "airport" ? "✈️" : "📍"}
+                  </span>
                   {item.label}
                 </button>
               </li>

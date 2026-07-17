@@ -29,6 +29,7 @@ from app.services.geocoding import (
 from app.services.destinations import _trip_context
 from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
 from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_object
+from app.services.theme_preferences import theme_display_label
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,10 @@ def _duration_label(num_days: int) -> str:
 def _tags_for_trip(trip: TripPlan) -> str:
     parts = []
     if trip.trip_purpose:
-        parts.append(trip.trip_purpose.capitalize())
-    if trip.theme:
-        parts.append(trip.theme.capitalize())
+        parts.append(trip.trip_purpose.replace("_", " ").capitalize())
+    theme_label = theme_display_label(trip.theme)
+    if theme_label != "Mixed":
+        parts.append(theme_label)
     if trip.budget_tier:
         parts.append(f"{trip.budget_tier.capitalize()} tier")
     return " · ".join(parts) if parts else "Personalized for you"

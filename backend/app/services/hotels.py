@@ -120,6 +120,11 @@ def _price_label(amount: int) -> str:
     return f"from ${amount}/night"
 
 
+def _hotel_price_note(adults: int) -> str:
+    guest_label = "guest" if adults == 1 else "guests"
+    return f"Per room per night · {adults} {guest_label}"
+
+
 def search_hotels(db: Session, user: User, trip_plan_id: int) -> HotelsResponse:
     trip = _get_trip_for_user(db, user, trip_plan_id)
     if not trip.include_hotels:
@@ -136,6 +141,7 @@ def search_hotels(db: Session, user: User, trip_plan_id: int) -> HotelsResponse:
     check_in, check_out = _default_dates(trip)
     adults = max(1, trip.num_adults)
     search_url = _booking_search_url(destination, check_in, check_out, adults)
+    price_note = _hotel_price_note(adults)
 
     hotels: list[HotelOptionPublic] = []
     for idx, blueprint in enumerate(HOTEL_BLUEPRINTS[tier]):
@@ -149,6 +155,7 @@ def search_hotels(db: Session, user: User, trip_plan_id: int) -> HotelsResponse:
                 area=blueprint["area"],
                 stars=blueprint["stars"],
                 price_per_night=_price_label(nightly),
+                price_note=price_note,
                 price_tier=tier,
                 amenities=blueprint["amenities"],
                 booking_url=_hotel_booking_url(name, destination, check_in, check_out, adults),

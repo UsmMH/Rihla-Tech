@@ -24,14 +24,14 @@ Planning a trip means juggling dates, budgets, destinations, and dozens of tabs 
 
 ## Key features
 
-- **Smart quiz & preferences** — logistics (dates, travelers, budget) plus trip style; validated inputs (cities via Mapbox, max 14 nights, traveler caps)
+- **Smart quiz & preferences** — dates, travelers, destination (Mapbox city search); optional flights (Duffel airport origin) and hotels; pace + multi-select interests
 - **AI itinerary generation** — real venue names, themed days, activities saved to your account
 - **“Not sure” destination path** — AI-suggested cities when you haven’t picked one yet
 - **Home dashboard** — plan a new trip, ask AI for travel advice, recent trips
 - **My Trips** — list, reopen, and delete past itineraries (in-app delete confirmation)
 - **Trip chatbot** — context-aware Q&A, propose edits, confirm with **Apply** or “yes”
 - **Home consult chat** — general travel Q&A before you start planning
-- **Flights & hotels** — Duffel sandbox flight options + hotel cards with Booking.com links (when enabled in quiz)
+- **Flights & hotels** — Duffel sandbox flight options + Google Flights deep-links; hotel cards with Booking.com links (when enabled in quiz)
 - **Collapsible trip result** — flights, hotels, and each day expand on demand with horizontal activity cards
 - **Google Maps links** — open any activity in Maps; per-day driving routes between stops
 - **App shell** — Home · My Trips · Community; Profile on desktop nav + mobile header icon
@@ -60,8 +60,8 @@ Community → Discover / Saved → open trip → vote, save, comment
 
 | Step | What happens |
 |------|----------------|
-| **Quiz** | Dates (max 14 nights), travelers, origin/destination via city search, flight/hotel toggles |
-| **Preferences** | Trip purpose, theme, pace, and personalization |
+| **Quiz** | Destination known? → dates → destination (if yes) → include flights? → airport origin (if yes) → travelers |
+| **Preferences** | Trip purpose, pace, themes (up to 2), budget, optional hotel suggestions |
 | **Destination picker** | Shown only when destination is “not sure” — AI city suggestions |
 | **Result** | Collapsible flights, hotels, and days; Maps deep-links; share to Community |
 | **Community** | Discover feed, saved trips, vote/save, comments on shared itineraries |
@@ -110,10 +110,10 @@ flowchart TB
 | Database | PostgreSQL 16 (Docker) |
 | Auth | JWT (python-jose) + bcrypt |
 | AI | Gemini, OpenRouter, or OpenAI (`LLM_PROVIDER` in `.env`) |
-| Flights | Duffel sandbox (`DUFFEL_ACCESS_TOKEN`) + Google Flights deep-links |
+| Flights | Duffel sandbox (`DUFFEL_ACCESS_TOKEN`) + airport autocomplete; Google Flights deep-links (IATA) |
 | Hotels | Mock suggestions + Booking.com deep-links |
 | Navigation | Google Maps deep-links (per activity and per-day routes) |
-| Geocoding | Mapbox Search Box + geocoding v5 (backend) |
+| Geocoding | Mapbox Search Box + geocoding v5 (cities); Duffel + Mapbox for airports |
 
 ---
 
@@ -132,7 +132,12 @@ flowchart TB
 | 6b — UX polish | ✅ | Collapsible result, light auth, nav + delete dialog |
 | 7 — Community | ✅ | Share, vote, save, comment on shared itineraries |
 | 7b — Validation & polish | ✅ | Quiz validation, mobile quiz/nav fixes, faster generate |
-| 8 — Admin/deploy | 🔄 | Admin dashboard + Render/Vercel configs (deploy pending) |
+| 8 — Admin/deploy/PWA | ✅ | Admin dashboard, Vercel + Render + Neon, PWA |
+| Refinements + quiz redesign | ✅ | Auth polish, planning UX, conditional origin, airport search |
+
+**Deployed:** [Vercel](https://vercel.com) (frontend) · [Render](https://render.com) (API) · [Neon](https://neon.tech) (Postgres)
+
+See [plan.md](plan.md) for roadmap and polish backlog.
 
 ---
 
@@ -217,6 +222,7 @@ npm run typecheck    # TypeScript check
 |-----|---------|
 | http://localhost:5173/api/health | DB connected |
 | http://localhost:8000/api/health/llm | LLM provider configured |
+| http://localhost:8000/api/health/mapbox | Mapbox geocoding configured |
 | http://localhost:8000/api/health/duffel | Duffel token configured |
 | http://localhost:8000/docs | Interactive API docs |
 
@@ -227,14 +233,14 @@ npm run typecheck    # TypeScript check
 ```
 src/
   pages/               Home dashboard, quiz, trip result, community, my trips, profile
-  components/trip/     ChatbotSidebar, QuestionFlow, OriginCityInput
-  components/layout/   Navbar, AppBottomNav
+  components/trip/     QuestionFlow, OriginCityInput, TripPlanningLoader, ChatbotSidebar
+  components/layout/   Navbar, AppBottomNav, PlanningBackHeader
   components/auth/     AuthLayout (light mode login/register)
   lib/                 API client, auth, trips, community, quizValidation, places, mapDirections
 backend/
   app/
     routers/           auth, quiz, trips, places, chat, community, health
-    services/          llm, itinerary, flights, hotels, community, quiz_validation, edit, chat
+    services/          llm, itinerary, flights, hotels, geocoding, place_labels, quiz_validation, community, chat
     models/            user, trip_plan, place, chat_message, community, question
 ```
 
@@ -242,11 +248,13 @@ backend/
 
 ## Known limitations
 
-- **Admin** — not started (Phase 8); deployment TBD (Vercel + Render + Neon suggested)
+- **Single destination per trip** — multi-city / multi-country itineraries not supported yet (see `plan.md` backlog)
 - **Desktop home** — wide-screen layout polish deferred
 - **Consult chat** — session history is client-side only; not persisted to the database
-- **Hotels** — mock cards with Booking.com links (no live hotel API)
+- **Hotels** — mock cards; hotel names and Booking.com links need per-card differentiation (backlog)
+- **Flights** — mock/Duffel cards may share the same Google Flights URL; per-offer links backlog
 - **Itinerary generate** — LLM is the main wait; flights/hotels load separately after the itinerary appears
+- **Airport origin search** — requires `DUFFEL_ACCESS_TOKEN` (Mapbox Search Box airport POI as fallback)
 
 ---
 

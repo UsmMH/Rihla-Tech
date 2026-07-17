@@ -9,6 +9,7 @@ from app.models.user import User
 from app.schemas.trip import DestinationSuggestion, SuggestDestinationsResponse
 from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
 from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_array
+from app.services.theme_preferences import decode_theme_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,12 @@ MOCK_SUGGESTIONS = [
 
 
 def _trip_context(trip: TripPlan) -> str:
+    pace, interests = decode_theme_preferences(trip.theme)
+    interest_label = ", ".join(interests) if interests else "mixed"
     parts = [
         f"Trip purpose: {trip.trip_purpose or 'explore'}",
-        f"Theme: {trip.theme or 'mixed'}",
+        f"Daily pace: {pace or 'balanced'}",
+        f"Interests: {interest_label}",
         f"Budget tier: {trip.budget_tier or 'mid'}",
         f"Travelers: {trip.num_adults} adults, {trip.num_children} children",
         f"Dates: {trip.start_date} to {trip.end_date}",
@@ -46,14 +50,18 @@ def _trip_context(trip: TripPlan) -> str:
 
 
 def _mock_suggestions(trip: TripPlan) -> list[DestinationSuggestion]:
-    theme = trip.theme or "natural"
+    _, interests = decode_theme_preferences(trip.theme)
+    theme = interests[0] if interests else "nature"
     purpose = trip.trip_purpose or "explore"
     tier = trip.budget_tier or "mid"
 
     themed = {
         "historical": 0,
-        "modern": 1,
-        "natural": 2,
+        "arts": 1,
+        "food": 1,
+        "nightlife": 1,
+        "local": 1,
+        "nature": 2,
     }
     primary_idx = themed.get(theme, 1)
     order = [primary_idx] + [i for i in range(len(MOCK_SUGGESTIONS)) if i != primary_idx]

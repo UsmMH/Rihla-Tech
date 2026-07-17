@@ -4,17 +4,29 @@ export interface PlaceSearchResult {
   label: string;
   latitude: number;
   longitude: number;
+  kind?: "city" | "airport";
+  iata_code?: string | null;
+  city?: string | null;
 }
 
 export interface ActivityPlaceSearchResult extends PlaceSearchResult {
   mapbox_id: string | null;
 }
 
-export async function searchPlaces(query: string): Promise<PlaceSearchResult[]> {
+export type PlaceSearchKind = "city" | "airport";
+
+export async function searchPlaces(
+  query: string,
+  kind: PlaceSearchKind = "city",
+): Promise<PlaceSearchResult[]> {
   if (query.trim().length < 2) {
     return [];
   }
-  return apiFetch<PlaceSearchResult[]>(`/places/search?q=${encodeURIComponent(query.trim())}`);
+  const params = new URLSearchParams({
+    q: query.trim(),
+    kind,
+  });
+  return apiFetch<PlaceSearchResult[]>(`/places/search?${params.toString()}`);
 }
 
 export async function searchActivityPlaces(

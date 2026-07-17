@@ -9,6 +9,35 @@ export const MAX_CITY_LENGTH = 120;
 
 const CITY_PATTERN = /^[\p{L}\p{M}0-9\s,'.\-()]+$/u;
 
+function normalizeCityToken(name: string): string {
+  let token = name.trim().toLowerCase();
+  if (token.startsWith("al-")) {
+    token = token.slice(3);
+  }
+  return token;
+}
+
+export function cityComparableKey(label: string): string {
+  const parts = label.split(",").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  if (parts.length >= 3 && parts[0].includes("(")) {
+    return normalizeCityToken(parts[1]);
+  }
+  return normalizeCityToken(parts[0]);
+}
+
+export function citiesConflict(origin: string, destination: string): boolean {
+  const originClean = origin.trim();
+  const destClean = destination.trim();
+  if (!originClean || !destClean) return false;
+
+  const originKey = cityComparableKey(originClean);
+  const destKey = cityComparableKey(destClean);
+  if (originKey && destKey) return originKey === destKey;
+
+  return originClean.toLowerCase() === destClean.toLowerCase();
+}
+
 export function isValidCityFormat(value: string): boolean {
   const trimmed = value.trim();
   return (
@@ -56,7 +85,9 @@ export function validateChoice(question: QuizQuestion, value: AnswerValue | unde
   const allowed = new Set(question.options.map((o) => o.option_key));
 
   if (question.multi) {
-    if (!Array.isArray(value) || value.length === 0) return "Select at least one option.";
+    if (!Array.isArray(value)) return "Invalid selection.";
+    if (question.key !== "travel_extras" && value.length === 0) return "Select at least one option.";
+    if (question.key === "theme" && value.length > 2) return "Pick up to 2 interests.";
     if (value.some((v) => !allowed.has(v))) return "Invalid selection.";
     return null;
   }
@@ -134,6 +165,7 @@ export function isQuestionStepReady(
 
   switch (question.question_type) {
     case "choice":
+      if (question.key === "travel_extras" && value === undefined) return true;
       return validateChoice(question, value) === null;
     case "date_range": {
       const dates = value as { start: string; end: string };
@@ -167,9 +199,13 @@ export function validateCrossFields(
   const originQ = byKey.get("origin");
   const destQ = byKey.get("destination");
   const destKnownQ = byKey.get("destination_known");
+  const includeFlightsQ = byKey.get("include_flights");
 
   const destKnown = destKnownQ ? answers[destKnownQ.id] : "yes";
   if (destKnown === "not_sure") return null;
+
+  const wantsFlights = includeFlightsQ ? answers[includeFlightsQ.id] === "yes" : false;
+  if (!wantsFlights) return null;
 
   if (!originQ || !destQ) return null;
 
@@ -177,8 +213,8 @@ export function validateCrossFields(
   const destination = answers[destQ.id];
   if (typeof origin !== "string" || typeof destination !== "string") return null;
 
-  if (origin.trim().toLowerCase() === destination.trim().toLowerCase()) {
-    return "Origin and destination must be different cities.";
+  if (citiesConflict(origin, destination)) {
+    return "Departure airport must serve a different city than your destination.";
   }
 
   return null;

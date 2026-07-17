@@ -39,22 +39,35 @@ QUIZ_QUESTIONS = [
     },
     {
         "phase": "quiz",
+        "key": "include_flights",
+        "title": "Include flight suggestions?",
+        "subtitle": "We'll show sample fares and Google Flights links on your trip page.",
+        "question_type": "choice",
+        "multi": False,
+        "sort_order": 4,
+        "options": [
+            {"option_key": "yes", "label": "Yes, show flights", "icon": "✈️", "description": "I'll enter where I'm flying from"},
+            {"option_key": "no", "label": "No flights needed", "icon": "🚗", "description": "Skip departure city — great for road trips or local stays"},
+        ],
+    },
+    {
+        "phase": "quiz",
+        "key": "origin",
+        "title": "Which airport are you departing from?",
+        "subtitle": "Search by airport or city — used for flight suggestions.",
+        "question_type": "text",
+        "multi": False,
+        "sort_order": 5,
+        "options": [],
+    },
+    {
+        "phase": "quiz",
         "key": "travelers",
         "title": "Who's traveling?",
         "subtitle": "Tell us how many adults and children.",
         "question_type": "travelers",
         "multi": False,
-        "sort_order": 4,
-        "options": [],
-    },
-    {
-        "phase": "quiz",
-        "key": "origin",
-        "title": "Where are you flying from?",
-        "subtitle": "Your departure city or airport.",
-        "question_type": "text",
-        "multi": False,
-        "sort_order": 5,
+        "sort_order": 6,
         "options": [],
     },
 ]
@@ -63,72 +76,77 @@ PREFERENCE_QUESTIONS = [
     {
         "phase": "preferences",
         "key": "trip_purpose",
-        "title": "What's the purpose of your trip?",
-        "subtitle": "This helps us tailor activities to your mood.",
+        "title": "What's the vibe of this trip?",
+        "subtitle": "Think mood, not logistics — we'll shape days around how you want to feel.",
         "question_type": "choice",
         "multi": False,
         "sort_order": 1,
         "options": [
-            {"option_key": "fun", "label": "Fun & Entertainment", "icon": "🎉", "description": "Nightlife, events, and good vibes"},
-            {"option_key": "heal", "label": "Rest & Heal", "icon": "🧘", "description": "Slow pace, wellness, and recharge"},
-            {"option_key": "explore", "label": "Explore & Discover", "icon": "🧭", "description": "New cultures, sights, and adventures"},
+            {"option_key": "fun", "label": "Fun & social", "icon": "🎉", "description": "Energy, events, and memorable nights out"},
+            {"option_key": "heal", "label": "Rest & recharge", "icon": "🧘", "description": "Slow mornings, wellness, and breathing room"},
+            {"option_key": "explore", "label": "Explore & discover", "icon": "🧭", "description": "Curiosity-led days and new experiences"},
+        ],
+    },
+    {
+        "phase": "preferences",
+        "key": "pace",
+        "title": "How packed should each day feel?",
+        "subtitle": "We'll balance activities and downtime to match your rhythm.",
+        "question_type": "choice",
+        "multi": False,
+        "sort_order": 2,
+        "options": [
+            {"option_key": "relaxed", "label": "Easygoing", "icon": "☕", "description": "1–2 highlights with plenty of free time"},
+            {"option_key": "balanced", "label": "Balanced", "icon": "⚖️", "description": "A full day with room to wander"},
+            {"option_key": "packed", "label": "See it all", "icon": "⚡", "description": "Maximize sights from morning to night"},
         ],
     },
     {
         "phase": "preferences",
         "key": "theme",
-        "title": "What theme interests you most?",
-        "subtitle": "We'll shape your itinerary around this.",
+        "title": "What should we lean into?",
+        "subtitle": "Pick up to two — we'll thread these through your itinerary.",
         "question_type": "choice",
-        "multi": False,
-        "sort_order": 2,
+        "multi": True,
+        "sort_order": 3,
         "options": [
-            {"option_key": "historical", "label": "Historical", "icon": "🏛️", "description": "Heritage sites, museums, and stories"},
-            {"option_key": "modern", "label": "Modern", "icon": "🏙️", "description": "Contemporary culture, design, and city life"},
-            {"option_key": "natural", "label": "Natural", "icon": "🌿", "description": "Parks, landscapes, and outdoor beauty"},
+            {"option_key": "historical", "label": "History & heritage", "icon": "🏛️", "description": "Museums, landmarks, and local stories"},
+            {"option_key": "food", "label": "Food & cafés", "icon": "🍜", "description": "Markets, restaurants, and regional flavors"},
+            {"option_key": "nature", "label": "Nature & outdoors", "icon": "🌿", "description": "Parks, viewpoints, and fresh air"},
+            {"option_key": "arts", "label": "Arts & design", "icon": "🎨", "description": "Galleries, architecture, and creative scenes"},
+            {"option_key": "nightlife", "label": "Nightlife", "icon": "🌙", "description": "Evening spots, live music, and city lights"},
+            {"option_key": "local", "label": "Local neighborhoods", "icon": "🏘️", "description": "Everyday streets away from the crowds"},
         ],
     },
     {
         "phase": "preferences",
         "key": "budget_tier",
-        "title": "What's your budget tier?",
-        "subtitle": "We'll match activities and stays to your comfort level.",
-        "question_type": "choice",
-        "multi": False,
-        "sort_order": 3,
-        "options": [
-            {"option_key": "eco", "label": "Eco", "icon": "🎒", "description": "Budget-friendly and local experiences"},
-            {"option_key": "mid", "label": "Mid", "icon": "💳", "description": "Comfortable mid-range travel"},
-            {"option_key": "luxury", "label": "Luxury", "icon": "✨", "description": "Premium stays and exclusive experiences"},
-        ],
-    },
-    {
-        "phase": "preferences",
-        "key": "include_flights",
-        "title": "Include flights in your plan?",
-        "subtitle": "We can search flight options for your trip.",
+        "title": "How do you like to spend?",
+        "subtitle": "Sets the tone for stays, dining, and activity picks.",
         "question_type": "choice",
         "multi": False,
         "sort_order": 4,
         "options": [
-            {"option_key": "yes", "label": "Yes, include flights", "icon": "✈️", "description": "Show flight options and deep-links"},
-            {"option_key": "no", "label": "No, skip flights", "icon": "🚫", "description": "I'll arrange my own transport"},
+            {"option_key": "eco", "label": "Budget-smart", "icon": "🎒", "description": "Great value and authentic local picks"},
+            {"option_key": "mid", "label": "Comfortable", "icon": "💳", "description": "Reliable mid-range favorites"},
+            {"option_key": "luxury", "label": "Premium", "icon": "✨", "description": "Upscale stays and standout experiences"},
         ],
     },
     {
         "phase": "preferences",
-        "key": "include_hotels",
-        "title": "Include hotels in your plan?",
-        "subtitle": "We can recommend stays that match your tier.",
+        "key": "travel_extras",
+        "title": "Want hotel suggestions?",
+        "subtitle": "Optional — we'll show stay ideas and Booking.com links on your trip page.",
         "question_type": "choice",
-        "multi": False,
+        "multi": True,
         "sort_order": 5,
         "options": [
-            {"option_key": "yes", "label": "Yes, include hotels", "icon": "🏨", "description": "Show hotel options and deep-links"},
-            {"option_key": "no", "label": "No, skip hotels", "icon": "🚫", "description": "I'll arrange my own accommodation"},
+            {"option_key": "hotels", "label": "Hotels", "icon": "🏨", "description": "Stay ideas and Booking.com links"},
         ],
     },
 ]
+
+OBSOLETE_PREFERENCE_KEYS = {"include_flights", "include_hotels"}
 
 
 def dedupe_questions(db: Session) -> None:
@@ -146,32 +164,55 @@ def dedupe_questions(db: Session) -> None:
         db.commit()
 
 
-def seed_questions(db: Session) -> None:
-    dedupe_questions(db)
-
-    for raw in QUIZ_QUESTIONS + PREFERENCE_QUESTIONS:
-        item = dict(raw)
-        options = item.pop("options")
-
+def _remove_obsolete_preference_questions(db: Session) -> None:
+    for key in OBSOLETE_PREFERENCE_KEYS:
         existing = (
             db.query(Question)
-            .filter(Question.phase == item["phase"], Question.key == item["key"])
+            .filter(Question.phase == "preferences", Question.key == key)
             .first()
         )
         if existing:
-            continue
+            db.delete(existing)
+    db.commit()
 
+
+def _upsert_question(db: Session, raw: dict) -> None:
+    item = dict(raw)
+    options = item.pop("options")
+
+    existing = (
+        db.query(Question)
+        .filter(Question.phase == item["phase"], Question.key == item["key"])
+        .first()
+    )
+    if existing:
+        for field, value in item.items():
+            setattr(existing, field, value)
+        db.query(AnswerOption).filter(AnswerOption.question_id == existing.id).delete()
+        question = existing
+    else:
         question = Question(**item)
         db.add(question)
         db.flush()
 
-        for i, opt in enumerate(options):
-            db.add(
-                AnswerOption(
-                    question_id=question.id,
-                    sort_order=i + 1,
-                    **opt,
-                )
+    for i, opt in enumerate(options):
+        db.add(
+            AnswerOption(
+                question_id=question.id,
+                sort_order=i + 1,
+                **opt,
             )
+        )
+
+
+def seed_questions(db: Session) -> None:
+    dedupe_questions(db)
+    _remove_obsolete_preference_questions(db)
+
+    for raw in QUIZ_QUESTIONS:
+        _upsert_question(db, raw)
+
+    for raw in PREFERENCE_QUESTIONS:
+        _upsert_question(db, raw)
 
     db.commit()

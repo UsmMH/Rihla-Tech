@@ -126,6 +126,7 @@ export interface FlightOffer {
   id: string;
   airline: string;
   price: string;
+  price_note?: string | null;
   price_amount: number | null;
   currency: string;
   outbound: FlightSegment;
@@ -148,6 +149,7 @@ export interface HotelOption {
   area: string;
   stars: number;
   price_per_night: string;
+  price_note?: string | null;
   price_tier: string;
   amenities: string[];
   booking_url: string;
@@ -184,6 +186,10 @@ function normalizeTripDetail(raw: TripDetail): TripDetail {
       })),
     })),
   };
+}
+
+export function tripHasItineraryActivities(trip: TripDetail): boolean {
+  return trip.itinerary.some((day) => day.activities.length > 0);
 }
 
 export async function suggestDestinations(tripPlanId: number): Promise<SuggestDestinationsResult> {
