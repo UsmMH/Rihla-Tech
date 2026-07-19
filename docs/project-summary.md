@@ -226,6 +226,85 @@ Consult chat is **stateless server-side**: the client sends the last ~10 message
 
 ## 5. LLM Layer
 
+### Architecture at a glance
+
+The LLM layer is a **layered provider-adapter architecture**, not a single client call
+sprinkled around the codebase. There are three tiers:
+
+1. **Feature services** (`itinerary`, `destinations`, `edit`, `chat`, `apply_edit`,
+   `consult_chat`) — each builds its own task-specific prompt, owns a deterministic
+   **mock fallback**, and expects a specific output shape. They all share prompt
+   context from `destinations._trip_context(trip)` (preferences → text block).
+2. **Provider adapter** (`llm.py`) — the single choke point. It hides Gemini /
+   OpenRouter / OpenAI behind one `openai.OpenAI` client by swapping `base_url` (+
+   headers), so every consumer calls the identical `client.chat.completions.create(...)`
+   regardless of provider. Consumers first gate on `llm_configured()`.
+3. **Resilience + parsing** (`llm_json.py`) — shared error classification
+   (`is_retryable_llm_error`), token-budget scaling (`itinerary_max_tokens`), and JSON
+   extraction/salvage (`parse_llm_json_array`, `parse_llm_json_object`,
+   `parse_llm_itinerary_object`). This is what makes free/truncating models usable.
+
+The recurring per-call pattern is: **gate → build prompt → call adapter → parse →
+retry on retryable error (bigger token budget) → fall back to mock when the key is
+missing or retries are exhausted.**
+
+```mermaid
+flowchart TB
+    subgraph Consumers["Feature services — build prompt + own mock fallback"]
+        direction LR
+        ITIN["itinerary.py<br/>_ai_itinerary<br/>→ day-by-day JSON"]
+        DEST["destinations.py<br/>_ai_suggestions<br/>→ 3 cities"]
+        EDIT["edit.py<br/>_ai_alternatives<br/>→ 3 alt destinations"]
+        CHAT["chat.py<br/>chat_with_trip<br/>→ reply + proposes_edit"]
+        APPLY["apply_edit.py<br/>apply_itinerary_edit<br/>→ updates[]"]
+        CONSULT["consult_chat.py<br/>consult_chat<br/>→ plain text"]
+    end
+
+    CTX["destinations._trip_context(trip)<br/>preferences → prompt context"]
+    ITIN -.-> CTX
+    DEST -.-> CTX
+    EDIT -.-> CTX
+    CHAT -.-> CTX
+    APPLY -.-> CTX
+    CHAT -->|"user confirms / Apply"| APPLY
+
+    subgraph Adapter["llm.py — provider adapter (choke point)"]
+        CFG["llm_configured()<br/>get_llm_provider() / get_llm_model()"]
+        CLIENT["get_llm_client()<br/>→ openai.OpenAI (base_url swapped)"]
+    end
+
+    Consumers -->|"1 · gate"| CFG
+    Consumers -->|"2 · chat.completions.create(model, messages, temp, max_tokens)"| CLIENT
+
+    CLIENT --> SDK["OpenAI SDK — one call shape"]
+    SDK --> GEMINI["Gemini<br/>generativelanguage.../openai/<br/>gemini-2.5-flash"]
+    SDK --> OROUTER["OpenRouter<br/>openrouter.ai/api/v1<br/>openai/gpt-4o-mini"]
+    SDK --> OPENAI["OpenAI<br/>api.openai.com<br/>gpt-4o-mini"]
+
+    GEMINI --> RAW["raw completion text"]
+    OROUTER --> RAW
+    OPENAI --> RAW
+
+    subgraph Parse["llm_json.py — resilience + parsing"]
+        PARSE["parse_llm_json_array / _object /<br/>parse_llm_itinerary_object (salvage days)"]
+        RETRY["is_retryable_llm_error<br/>itinerary_max_tokens (scale budget)"]
+    end
+
+    RAW --> PARSE
+    PARSE -->|"valid → typed result"| OUT["Typed response → router → client"]
+    PARSE -->|"retryable / incomplete"| RETRY
+    RETRY -->|"retry with larger token budget"| CLIENT
+
+    CFG -->|"no API key"| MOCK["Mock fallback (per service)<br/>source=mock + fallback_reason"]
+    RETRY -->|"retries exhausted"| MOCK
+    MOCK --> OUT
+```
+
+**How to read it:** solid arrows are the call/data path; dotted arrows show shared
+prompt context. The `chat → apply_edit` edge is the propose/apply handoff (see below).
+Note `consult_chat` returns plain text (no JSON parsing), while the other five expect
+structured JSON and therefore route through `llm_json.py`.
+
 ### How the LLM is called (`services/llm.py`)
 
 One module, one SDK (`openai.OpenAI`), three providers. Selection order:
