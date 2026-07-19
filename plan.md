@@ -1,7 +1,7 @@
 # RihlaTech — Development Plan & Handoff
 
 > **Purpose:** Continue development in a new chat without losing context.  
-> **Last updated:** July 2026 · **Phases 0–8 deployed** · **Refinements + Quiz redesign done** · **`dev` branch active** · **Next: polish backlog / Nice to have**
+> **Last updated:** July 2026 · **Phases 0–8 deployed** · **Refinements + Quiz redesign done** · **`dev` branch active** · **Technical summary in `docs/project-summary.md`** · **Next: polish backlog / Nice to have**
 
 ---
 
@@ -87,6 +87,7 @@ Same Mapbox **public** token (`pk.…`) can be used for both. Recommended scopes
   # When ready to deploy: merge dev → main on GitHub (user does this)
   ```
 - **Do not commit:** `.env`, `node_modules/`, `backend/.venv/`, `.phase5-backup/`, `__pycache__/`
+- **Docs:** `plan.md` (this file) is the source of truth for roadmap/status. `docs/project-summary.md` is the technical reference (system architecture, LLM provider-adapter diagram, data model ERD, user-flow diagrams). `README.md` is the concise front door.
 
 ---
 
@@ -113,6 +114,8 @@ Rihla-Tech/
 │   │   └── trip/         QuestionFlow, OriginCityInput, ChatbotSidebar
 │   └── lib/trips.ts, community.ts, quizValidation.ts, places.ts, mapDirections.ts, admin.ts, pwa.ts
 ├── public/               manifest.json, sw.js, rihlatech-logo.png (PWA)
+├── docs/
+│   └── project-summary.md  # Technical deep-dive: architecture, LLM layer, data model, flows
 ├── vercel.json           Frontend-only Vite deploy
 ├── render.yaml           Backend deploy (Render)
 ├── plan.md
@@ -514,7 +517,7 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
 4. **Then pick:** multi-city trips, nationality question, Images API, or email validation polish.
 5. Restart backend after pull (quiz seed).
 
-**Recent session (July 2026):** On `dev` — long-trip itinerary fix, per-card flight/hotel Booking links, Mapbox lodging hotel names with mock fallback.
+**Recent session (July 2026):** On `dev` — long-trip itinerary fix (`itinerary_max_tokens` scaling + JSON salvage), per-card flight/hotel Booking links, Mapbox lodging hotel names with mock fallback, and added `docs/project-summary.md` (technical reference with architecture + LLM diagrams). All High/Medium refinements + Quiz redesign confirmed complete.
 
 ---
 
