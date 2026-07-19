@@ -1,7 +1,7 @@
 # RihlaTech — Development Plan & Handoff
 
 > **Purpose:** Continue development in a new chat without losing context.  
-> **Last updated:** July 2026 · **Phases 0–8 deployed** · **Refinements + Quiz redesign done** · **Next: Nice to have (or polish backlog)**
+> **Last updated:** July 2026 · **Phases 0–8 deployed** · **Refinements + Quiz redesign done** · **`dev` branch active** · **Next: polish backlog / Nice to have**
 
 ---
 
@@ -26,7 +26,7 @@
 | AI / LLM | `backend/app/services/llm.py` | **Gemini**, **OpenRouter** (dev default), or **OpenAI**; set `LLM_PROVIDER` in `.env` |
 | Maps / Geocoding | **Mapbox** (backend) + **Google Maps deep-links** (result page) | City autocomplete + Search Box POI on backend; no Google SDK |
 | Flights | **Duffel** sandbox + mock/deep-link fallback | Phase 6 |
-| Hotels | Mock cards + **Booking.com deep-links** (no RapidAPI) | Phase 6 |
+| Hotels | **Mapbox lodging POI** + mock fallback + **Booking.com deep-links** | Real names when Mapbox returns ≥3; no RapidAPI |
 | Vector DB | Defer — Postgres + pgvector only if needed later | |
 
 **Avoid for FYP:** Google Places/Maps SDK (billing/setup pain), unofficial RapidAPI flight/hotel scrapers.  
@@ -78,7 +78,14 @@ Same Mapbox **public** token (`pk.…`) can be used for both. Recommended scopes
 
 ## Repository state
 
-- **Git:** `main` on GitHub (`UsmMH/Rihla-Tech`) — synced with remote
+- **Git:** `main` on GitHub (`UsmMH/Rihla-Tech`) — production; **`dev`** — all active development
+- **Branching (required):** Do **all work on `dev`**. Commit and push to `dev`, **not** `main`. User merges `dev` → `main` manually when ready to deploy (Vercel/Render auto-deploy from `main`).
+  ```bash
+  git checkout dev && git pull
+  # ... work, commit ...
+  git push origin dev
+  # When ready to deploy: merge dev → main on GitHub (user does this)
+  ```
 - **Do not commit:** `.env`, `node_modules/`, `backend/.venv/`, `.phase5-backup/`, `__pycache__/`
 
 ---
@@ -281,12 +288,12 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 
 Phase 8 (admin + deploy + PWA) is **done**. **High + Medium refinements** and **Quiz Flow Redesign** are **done**.
 
-**Where we are:** Core FYP feature set is complete and deployed. Remaining work is optional polish (Nice to have) or backlog items below.
+**Where we are:** Core FYP feature set is complete. **`dev` branch** has bug fixes and polish (long-trip itinerary, flight/hotel links, Mapbox hotels). Merge `dev` → `main` when ready to deploy.
 
 **Next (pick one):**
-1. **Polish backlog** — flight/hotel per-card links, hotel names, multi-city trips (see below).
-2. **Nationality/passport question** — Nice to have (Images API deferred).
-3. **Deploy** — push to GitHub → Vercel/Render when ready (this session).
+1. **Merge `dev` → `main`** — deploy itinerary + hotel/flight polish to Vercel/Render when tested.
+2. **Polish backlog** — multi-city trips, email validation, destination picker TBD bug.
+3. **Nice to have** — nationality/passport question, Images API (Pexels).
 
 Fix **one item at a time**; mark `[x]` when done.
 
@@ -383,13 +390,13 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
   *Done:* `/places/search?kind=airport` on origin step; **Duffel** `/places/suggestions` primary (handles `RUH`, `King kh`); Mapbox Search Box `poi_category=airport` fallback; IATA in label; `cities_conflict()` blocks same-city departures; cross-field validation on origin step. **Follow-up fixed:** Google Flights deep-link now uses IATA codes + `through` return date (`flights.py`).
 
 - [ ] **Images API** (Pexels preferred) for trip result / destination visuals.  
-  *Deferred per user; needs `PEXELS_API_KEY` in env.*
+  *needs `PEXELS_API_KEY` in env.*
 
 - [ ] **Nationality/passport question** for visa limitation awareness in quiz/preferences.  
   *Files:* quiz seed, `QuestionFlow`, backend quiz models — **next Nice to have if continuing.*
 
 ---
-
+  
 ## Quiz Flow Redesign ✅
 
 - [x] **Conditional origin question** — only ask for origin if the user wants flight suggestions. Flow: Destination → "Include flights?" → Yes: airport origin / No: skip origin entirely.  
@@ -400,11 +407,33 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
 
 ---
 
+## Git workflow (top priority)
+
+- [x] **`dev` branch set up** — create `dev` from current `main` if it does not exist; all future work happens on `dev`.
+  ```bash
+  git checkout main && git pull
+  git checkout -b dev    # skip if dev already exists
+  git push -u origin dev
+  ```
+- **Rule:** Commit and push to **`dev` only**. Never push to `main`. User merges `dev` → `main` on GitHub when ready to deploy to Vercel/Render.
+
+---
+
+## Bugs (fix on `dev`)
+
+- [x] **Itinerary generation fails for trips ≥ 6 nights** — user reports generate fails when the trip is 6 nights or longer (quiz allows up to 14 nights). Likely LLM output truncation, JSON parse errors, or day-count handling in `backend/app/services/itinerary.py` / `llm.py`. Reproduce: 7+ day range → `POST /trips/generate` → empty days or error on result page.  
+  *Files:* `itinerary.py`, `llm_json.py`  
+  *Done:* Scale `max_tokens` with trip length (`itinerary_max_tokens`); `parse_llm_itinerary_object` salvages truncated `days` arrays and validates day count; retries bump token budget.
+
+---
+
 ## Polish backlog (not scheduled)
 
 - [ ] **Multi-city / multi-country trips** — support users who want to visit multiple cities in one country or across countries in a single trip (quiz UX, itinerary structure, flights/hotels per leg). *Product decision needed: one trip vs linked sub-trips.*
-- [ ] **Fix hotel card names and Booking.com links** — mock hotels reuse similar names; each card’s link currently goes to the same generic search URL instead of a distinct property/search.
-- [ ] **Fix flight card booking links** — individual flight offers share the same Google Flights URL; each card should deep-link to a route-appropriate search (or offer-specific when available).
+- [x] **Fix hotel card names and Booking.com links** — mock hotels reuse similar names; each card’s link currently goes to the same generic search URL instead of a distinct property/search.  
+  *Done:* Mapbox lodging POI search for real hotel names (fallback to mock if fewer than 3 results); per-card Booking.com search uses `"{name}, {city}"` with trip dates/guests.
+- [x] **Fix flight card booking links** — individual flight offers share the same Google Flights URL; each card should deep-link to a route-appropriate search (or offer-specific when available).  
+  *Done:* Per-offer Google Flights URL uses segment IATA codes (Duffel) or airline name (mock) so each card differs.
 - [ ] **Combine hotels + flights booking question** — optional single preferences step ("Booking links") instead of flights in quiz + hotels in preferences. User undecided; low priority.
 - [ ] **Email validation edge cases** — e.g. `email123@gmail.cos` still passes; stricter TLD/format rules.
 - [ ] **Destination picker TBD bug** — if user exists during AI destination suggestion, destination may be set TBD; "try again" can ask to add destination confusingly.
@@ -470,17 +499,22 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
 15. **Airport search:** Uses **Duffel** `places/suggestions` (needs `DUFFEL_ACCESS_TOKEN`); Mapbox Search Box airport POI as fallback. Mapbox Geocoding v5 `types=poi` does **not** return airports — do not use for origin.
 16. **Quiz re-seed:** Restart backend after pull so `include_flights`, origin copy, and preferences questions update.
 17. **Google Flights link:** Built with IATA codes when available — `Flights from RUH to CDG on YYYY-MM-DD through YYYY-MM-DD`.
+18. **Long trips:** Itinerary generate for 6+ nights — fixed via scaled token budget + itinerary JSON salvage (July 2026).
+19. **Git:** All work on **`dev`** branch; push to `dev`. Merge `dev` → `main` only when ready to deploy (user merges manually).
+20. **Hotels:** Mapbox Search Box `poi_category=hotel` for real names when ≥3 results; mock fallback otherwise. Prices are tier estimates. Some cities (e.g. Tokyo) have sparse Mapbox hotel POI — mock cards used.
+21. **Flight cards:** Each offer has its own Google Flights deep-link (IATA + airline per offer).
 
 ---
 
 ## Handoff — start here in next chat
 
-1. **Next feature:** Polish backlog — start with **flight/hotel per-card links** or **multi-city trips** (user priority); else nationality question.
-2. **Quiz + airports:** Done — Duffel airport search; Google Flights route URL uses IATA codes.
-3. **Restart backend** after pull (quiz seed).
-4. Do not git commit unless user says to.
+1. **`git checkout dev && git pull`** — all active work is on `dev`; never push to `main`.
+2. **Test on `dev`:** 7+ night itinerary generate; hotels section (Mapbox real names + Booking links); flight card links.
+3. **When ready:** merge `dev` → `main` on GitHub to deploy (Vercel + Render auto-deploy from `main`).
+4. **Then pick:** multi-city trips, nationality question, Images API, or email validation polish.
+5. Restart backend after pull (quiz seed).
 
-**Recent session (July 2026):** Quiz redesign, Duffel airport origin, refinements, README + plan update, pushed to GitHub.
+**Recent session (July 2026):** On `dev` — long-trip itinerary fix, per-card flight/hotel Booking links, Mapbox lodging hotel names with mock fallback.
 
 ---
 
@@ -490,30 +524,29 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
 I'm working on RihlaTech — AI travel planning web app (KSU IS498 capstone).
 Read plan.md and README.md first; plan.md is the source of truth.
 
-Repo: UsmMH/Rihla-Tech (main)
+Repo: UsmMH/Rihla-Tech — work on **`dev`** branch (merge to `main` only when deploying)
 Stack: React 18 + Vite + Tailwind + FastAPI + PostgreSQL 16 + Gemini/Duffel/Mapbox
-Deployed: Vercel (frontend) + Render (API) + Neon (DB). PWA enabled.
+Deployed: Vercel (frontend) + Render (API) + Neon (DB). PWA enabled. Prod deploys from `main`.
 
-Done: Phases 0–8 + all Refinements + Quiz Flow Redesign + airport origin (Duffel).
+Done: Phases 0–8 + Refinements + Quiz redesign + airport origin (Duffel).
+On `dev` (not yet merged to main): long-trip itinerary fix (≥6 nights), per-card flight Google Flights links, Mapbox lodging hotels + Booking.com deep-links.
 
-CURRENT WORK: Polish backlog in plan.md (priority order):
-1. Fix flight card links (each offer → distinct Google Flights deep-link)
-2. Fix hotel names + Booking.com links (per-card)
-3. Multi-city / multi-country trip support (product design first)
-- One fix at a time; mark [x] in plan.md when done.
-
-Also Nice to have: Nationality question (Images API deferred).
-
-Polish backlog: email validation, destination-picker TBD bug, combine hotels+flights step.
+CURRENT WORK (priority order):
+1. Test `dev` locally (7+ nights, hotels Mapbox, flight links) — then merge `dev` → `main` when ready
+2. Polish backlog: multi-city trips, email validation, destination picker TBD bug
+3. Nice to have: nationality question, Images API (Pexels)
 
 Constraints:
+- Work on `dev`: git checkout dev && git pull → commit → git push origin dev
 - No Google Maps SDK; deep-links OK
-- No RapidAPI hotel scrapers
+- No RapidAPI hotel scrapers; no Booking.com API (deep-links only)
 - Don't commit .env, .phase5-backup/, node_modules/, backend/.venv/
 - Ask before git commit unless I say to commit
 - Minimal scope per fix; match existing code style
 
 Notes:
+- Hotels: Mapbox `poi_category=hotel` → real names; mock fallback if <3 results or API fails
+- Hotel/flight prices on cards are estimates unless Duffel returns real flight totals
 - Origin airport search = Duffel primary; needs DUFFEL_ACCESS_TOKEN
 - Flights=no skips origin; hotels optional in preferences travel_extras
 - Restart backend after pull for quiz seed

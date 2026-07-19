@@ -174,6 +174,8 @@ def _google_flights_url(
     depart: date,
     return_date: date | None,
     adults: int,
+    *,
+    airline: str | None = None,
 ) -> str:
     origin = (
         origin_code
@@ -190,6 +192,8 @@ def _google_flights_url(
         query += f" through {return_date.isoformat()}"
     if adults > 1:
         query += f" {adults} adults"
+    if airline:
+        query += f" {airline}"
     return f"https://www.google.com/travel/flights?q={quote(query)}"
 
 
@@ -242,8 +246,11 @@ def _offer_from_duffel(
     offer: dict,
     origin_label: str,
     dest_label: str,
-    search_url: str,
     price_note: str,
+    *,
+    depart: date,
+    return_date: date | None,
+    adults: int,
 ) -> FlightOfferPublic:
     slices = offer.get("slices") or []
     outbound = _segment_from_duffel_slice(slices[0], origin_label, dest_label) if slices else None
@@ -261,6 +268,16 @@ def _offer_from_duffel(
         amount = None
     price_display = f"{currency} {total}" if currency else str(total)
     airline = owner.get("name") or (outbound.airline if outbound else "Airline")
+    offer_url = _google_flights_url(
+        outbound.origin_code if outbound else None,
+        outbound.destination_code if outbound else None,
+        outbound.origin if outbound else origin_label,
+        outbound.destination if outbound else dest_label,
+        depart,
+        return_date if inbound else None,
+        adults,
+        airline=airline,
+    )
     return FlightOfferPublic(
         id=str(offer.get("id") or ""),
         airline=airline,
@@ -277,7 +294,7 @@ def _offer_from_duffel(
             airline=airline,
         ),
         inbound=inbound,
-        booking_url=search_url,
+        booking_url=offer_url,
     )
 
 
@@ -285,11 +302,13 @@ def _mock_offers(
     trip: TripPlan,
     origin_code: str,
     dest_code: str,
-    search_url: str,
+    depart: date,
+    return_date: date | None,
     price_note: str,
 ) -> list[FlightOfferPublic]:
     origin = trip.origin or origin_code
     destination = trip.destination or dest_code
+    adults = max(1, trip.num_adults)
     tier = (trip.budget_tier or "mid").lower()
     base_prices = {"budget": (320, 410), "mid": (480, 620), "luxury": (890, 1240)}
     low, high = base_prices.get(tier, base_prices["mid"])
@@ -300,6 +319,16 @@ def _mock_offers(
     ]
     offers: list[FlightOfferPublic] = []
     for idx, (airline, price, duration, stops) in enumerate(carriers):
+        booking_url = _google_flights_url(
+            origin_code,
+            dest_code,
+            origin,
+            destination,
+            depart,
+            return_date,
+            adults,
+            airline=airline,
+        )
         offers.append(
             FlightOfferPublic(
                 id=f"mock-{idx}",
@@ -320,7 +349,7 @@ def _mock_offers(
                     stops=stops,
                 ),
                 inbound=None,
-                booking_url=search_url,
+                booking_url=booking_url,
             )
         )
     return offers
@@ -366,20 +395,20 @@ def _search_duffel(
     )
     data = payload.get("data") or {}
     offers = data.get("offers") or []
-    search_url = _google_flights_url(
-        origin_code,
-        dest_code,
-        trip.origin or origin_code or "",
-        trip.destination or dest_code or "",
-        depart,
-        return_date,
-        max(1, trip.num_adults),
-    )
     origin_label = trip.origin or origin_code
     dest_label = trip.destination or dest_code
     price_note = _flight_price_note(trip, per_person=False)
+    adults = max(1, trip.num_adults)
     parsed = [
-        _offer_from_duffel(offer, origin_label, dest_label, search_url, price_note)
+        _offer_from_duffel(
+            offer,
+            origin_label,
+            dest_label,
+            price_note,
+            depart=depart,
+            return_date=return_date,
+            adults=adults,
+        )
         for offer in offers[:MAX_OFFERS]
     ]
     return parsed
@@ -414,7 +443,7 @@ def search_flights(db: Session, user: User, trip_plan_id: int) -> FlightsRespons
         reason = "Could not resolve airport codes for origin or destination"
         mock_note = _flight_price_note(trip, per_person=True)
         return FlightsResponse(
-            offers=_mock_offers(trip, origin_code or "RUH", dest_code or "DXB", search_url, mock_note),
+            offers=_mock_offers(trip, origin_code or "RUH", dest_code or "DXB", depart, return_date, mock_note),
             search_url=search_url,
             source="mock",
             fallback_reason=reason,
@@ -443,7 +472,7 @@ def search_flights(db: Session, user: User, trip_plan_id: int) -> FlightsRespons
 
     mock_note = _flight_price_note(trip, per_person=True)
     return FlightsResponse(
-        offers=_mock_offers(trip, origin_code, dest_code, search_url, mock_note),
+        offers=_mock_offers(trip, origin_code, dest_code, depart, return_date, mock_note),
         search_url=search_url,
         source="mock",
         fallback_reason=fallback_reason,

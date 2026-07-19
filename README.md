@@ -31,7 +31,7 @@ Planning a trip means juggling dates, budgets, destinations, and dozens of tabs 
 - **My Trips** — list, reopen, and delete past itineraries (in-app delete confirmation)
 - **Trip chatbot** — context-aware Q&A, propose edits, confirm with **Apply** or “yes”
 - **Home consult chat** — general travel Q&A before you start planning
-- **Flights & hotels** — Duffel sandbox flight options + Google Flights deep-links; hotel cards with Booking.com links (when enabled in quiz)
+- **Flights & hotels** — Duffel sandbox + per-card Google Flights deep-links; Mapbox lodging hotel names (mock fallback) + Booking.com deep-links
 - **Collapsible trip result** — flights, hotels, and each day expand on demand with horizontal activity cards
 - **Google Maps links** — open any activity in Maps; per-day driving routes between stops
 - **App shell** — Home · My Trips · Community; Profile on desktop nav + mobile header icon
@@ -111,7 +111,7 @@ flowchart TB
 | Auth | JWT (python-jose) + bcrypt |
 | AI | Gemini, OpenRouter, or OpenAI (`LLM_PROVIDER` in `.env`) |
 | Flights | Duffel sandbox (`DUFFEL_ACCESS_TOKEN`) + airport autocomplete; Google Flights deep-links (IATA) |
-| Hotels | Mock suggestions + Booking.com deep-links |
+| Hotels | Mapbox lodging POI + mock fallback; Booking.com deep-links (no Booking API) |
 | Navigation | Google Maps deep-links (per activity and per-day routes) |
 | Geocoding | Mapbox Search Box + geocoding v5 (cities); Duffel + Mapbox for airports |
 
@@ -134,8 +134,10 @@ flowchart TB
 | 7b — Validation & polish | ✅ | Quiz validation, mobile quiz/nav fixes, faster generate |
 | 8 — Admin/deploy/PWA | ✅ | Admin dashboard, Vercel + Render + Neon, PWA |
 | Refinements + quiz redesign | ✅ | Auth polish, planning UX, conditional origin, airport search |
+| `dev` polish (July 2026) | ✅ on `dev` | Long-trip itinerary fix, per-card flight/hotel links, Mapbox hotels |
 
-**Deployed:** [Vercel](https://vercel.com) (frontend) · [Render](https://render.com) (API) · [Neon](https://neon.tech) (Postgres)
+**Deployed (prod):** `main` on [Vercel](https://vercel.com) (frontend) · [Render](https://render.com) (API) · [Neon](https://neon.tech) (Postgres)  
+**Active development:** `dev` branch — merge to `main` when ready to deploy.
 
 See [plan.md](plan.md) for roadmap and polish backlog.
 
@@ -251,9 +253,9 @@ backend/
 - **Single destination per trip** — multi-city / multi-country itineraries not supported yet (see `plan.md` backlog)
 - **Desktop home** — wide-screen layout polish deferred
 - **Consult chat** — session history is client-side only; not persisted to the database
-- **Hotels** — mock cards; hotel names and Booking.com links need per-card differentiation (backlog)
-- **Flights** — mock/Duffel cards may share the same Google Flights URL; per-offer links backlog
-- **Itinerary generate** — LLM is the main wait; flights/hotels load separately after the itinerary appears
+- **Hotels** — Mapbox lodging POI for real names when available (≥3 results); mock fallback otherwise. Booking.com search deep-links per card; prices are tier estimates (no Booking API)
+- **Flights** — per-offer Google Flights deep-links (IATA + airline); Duffel sandbox when configured
+- **Long trips** — itinerary generate fixed for 6+ nights on `dev` (scaled LLM tokens + JSON salvage)
 - **Airport origin search** — requires `DUFFEL_ACCESS_TOKEN` (Mapbox Search Box airport POI as fallback)
 
 ---
