@@ -28,7 +28,12 @@ from app.services.geocoding import (
 )
 from app.services.destinations import _trip_context
 from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
-from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_object
+from app.services.llm_json import (
+    ITINERARY_MAX_TOKENS,
+    is_retryable_llm_error,
+    itinerary_max_tokens,
+    parse_llm_itinerary_object,
+)
 from app.services.theme_preferences import theme_display_label
 
 logger = logging.getLogger(__name__)
@@ -195,6 +200,9 @@ Preferences:
     last_error: Exception | None = None
     for attempt in range(3):
         try:
+            token_budget = itinerary_max_tokens(num_days)
+            if attempt > 0:
+                token_budget = min(ITINERARY_MAX_TOKENS, token_budget + 2048 * attempt)
             response = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -202,10 +210,10 @@ Preferences:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.5,
-                max_tokens=LLM_MAX_TOKENS,
+                max_tokens=token_budget,
             )
             content = response.choices[0].message.content or ""
-            return parse_llm_json_object(content)
+            return parse_llm_itinerary_object(content, expected_days=num_days)
         except Exception as exc:
             last_error = exc
             if is_retryable_llm_error(exc) and attempt < 2:

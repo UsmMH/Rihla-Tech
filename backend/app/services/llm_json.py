@@ -141,3 +141,75 @@ def is_retryable_llm_error(exc: Exception) -> bool:
 
 # Default completion budget — free models often truncate below OpenAI's default.
 LLM_MAX_TOKENS = 2048
+
+# Itinerary responses are large (3 activities/day with coords); scale with trip length.
+ITINERARY_BASE_TOKENS = 800
+ITINERARY_TOKENS_PER_DAY = 380
+ITINERARY_MAX_TOKENS = 8192
+
+
+def itinerary_max_tokens(num_days: int) -> int:
+    budget = ITINERARY_BASE_TOKENS + max(1, num_days) * ITINERARY_TOKENS_PER_DAY
+    return min(ITINERARY_MAX_TOKENS, max(LLM_MAX_TOKENS, budget))
+
+
+def _looks_like_day_object(obj: dict) -> bool:
+    if "day" in obj or "activities" in obj:
+        return True
+    return any(slot in obj for slot in ("morning", "afternoon", "evening"))
+
+
+def _salvage_days_from_itinerary_text(text: str) -> list[dict]:
+    match = re.search(r'"days"\s*:\s*\[', text)
+    if not match:
+        return []
+    raw = _salvage_objects_from_array_slice(text[match.end() :])
+    return [obj for obj in raw if _looks_like_day_object(obj)]
+
+
+def parse_llm_itinerary_object(content: str, *, expected_days: int) -> dict[str, Any]:
+    """Parse an itinerary JSON object; salvage day entries when the response is truncated."""
+    text = strip_code_fences(content)
+    payload: dict[str, Any] | None = None
+    days: list[dict] = []
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            payload = parsed
+            raw_days = parsed.get("days")
+            if isinstance(raw_days, list):
+                days = [d for d in raw_days if isinstance(d, dict)]
+    except json.JSONDecodeError:
+        pass
+
+    if not days:
+        start = text.find("{")
+        if start != -1:
+            end = text.rfind("}")
+            if end > start:
+                try:
+                    parsed = json.loads(text[start : end + 1])
+                    if isinstance(parsed, dict):
+                        payload = parsed
+                        raw_days = parsed.get("days")
+                        if isinstance(raw_days, list):
+                            days = [d for d in raw_days if isinstance(d, dict)]
+                except json.JSONDecodeError:
+                    pass
+
+    if len(days) < expected_days:
+        salvaged = _salvage_days_from_itinerary_text(text)
+        if len(salvaged) > len(days):
+            days = salvaged
+            payload = dict(payload or {})
+            payload["days"] = days
+
+    if len(days) < expected_days:
+        raise ValueError(
+            f"Incomplete itinerary: expected {expected_days} days, got {len(days)}"
+        )
+
+    result = dict(payload or {})
+    result["days"] = days
+    return result

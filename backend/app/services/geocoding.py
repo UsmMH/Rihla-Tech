@@ -967,6 +967,109 @@ def _normalize_searchbox_airport(feature: dict) -> dict | None:
     }
 
 
+def _normalize_searchbox_lodging(feature: dict) -> dict | None:
+    geometry = feature.get("geometry", {})
+    coords = geometry.get("coordinates")
+    if not isinstance(coords, list) or len(coords) < 2:
+        return None
+
+    props = feature.get("properties", {}) or {}
+    name = str(props.get("name") or props.get("name_preferred") or "").strip()
+    if not name:
+        return None
+
+    lng, lat = float(coords[0]), float(coords[1])
+    context = props.get("context") or {}
+    neighborhood = str(context.get("neighborhood", {}).get("name") or "").strip()
+    place = str(context.get("place", {}).get("name") or "").strip()
+    if place.lower().startswith("al-"):
+        place = place[3:].strip() or place
+    area = neighborhood or place or "City center"
+
+    return {
+        "name": name,
+        "area": area,
+        "city": place or None,
+        "latitude": lat,
+        "longitude": lng,
+    }
+
+
+def _searchbox_lodging_results(
+    query: str,
+    *,
+    proximity: tuple[float, float],
+    country_code: str | None = None,
+    limit: int = 8,
+) -> list[dict]:
+    """Mapbox Search Box lodging POIs near a destination center."""
+    if not mapbox_configured() or not query.strip():
+        return []
+
+    lng, lat = proximity
+    token = settings.mapbox_access_token
+    encoded = quote(query.strip(), safe="")
+    url = (
+        f"{MAPBOX_SEARCHBOX_URL}?q={encoded}"
+        f"&proximity={lng},{lat}&limit={limit}&types=poi&poi_category=hotel&access_token={token}"
+    )
+    if country_code:
+        url += f"&country={country_code.lower()}"
+
+    try:
+        with urlopen(url, timeout=12) as response:
+            payload = json.loads(response.read().decode())
+    except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
+        logger.warning("Mapbox lodging search failed: %s", exc)
+        return []
+
+    results: list[dict] = []
+    for feature in payload.get("features", []):
+        item = _normalize_searchbox_lodging(feature)
+        if item:
+            results.append(item)
+    return results
+
+
+def search_lodging_hotels(destination: str, *, limit: int = 6) -> list[dict]:
+    """Return lodging POIs for a trip destination. Empty list on failure."""
+    cleaned = destination.strip()
+    if not cleaned or not mapbox_configured():
+        return []
+
+    dest_context = _destination_context(cleaned)
+    dest_center, dest_context = _resolve_destination_center(cleaned, dest_context)
+    if dest_center is None:
+        return []
+
+    city = dest_context.get("city") or cleaned.split(",")[0].strip()
+    country_code = dest_context.get("country_code")
+    queries = [f"hotels in {city}", "hotel", f"{city} hotel"]
+
+    seen_names: set[str] = set()
+    results: list[dict] = []
+    for query in queries:
+        if len(results) >= limit:
+            break
+        batch = _searchbox_lodging_results(
+            query,
+            proximity=dest_center,
+            country_code=country_code,
+            limit=limit,
+        )
+        for item in batch:
+            key = item["name"].strip().lower()
+            if not key or key in seen_names:
+                continue
+            seen_names.add(key)
+            if not item.get("city"):
+                item["city"] = city
+            results.append(item)
+            if len(results) >= limit:
+                break
+    return results[:limit]
+
+
 def _coords_valid_for_trip(
     lat: float,
     lng: float,
