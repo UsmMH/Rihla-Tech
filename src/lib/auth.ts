@@ -7,6 +7,7 @@ export type User = {
   last_name: string;
   phone_num: string | null;
   is_admin: boolean;
+  is_verified: boolean;
   created_at: string;
 };
 
@@ -14,6 +15,11 @@ type AuthResponse = {
   access_token: string;
   token_type: string;
   user: User;
+};
+
+export type RegisterAcceptedResponse = {
+  email: string;
+  message: string;
 };
 
 export type RegisterInput = {
@@ -56,8 +62,8 @@ export function clearAuth(): void {
   localStorage.removeItem(USER_KEY);
 }
 
-export async function register(input: RegisterInput): Promise<AuthResponse> {
-  return apiFetch<AuthResponse>("/auth/register", {
+export async function register(input: RegisterInput): Promise<RegisterAcceptedResponse> {
+  return apiFetch<RegisterAcceptedResponse>("/auth/register", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -67,6 +73,20 @@ export async function login(input: LoginInput): Promise<AuthResponse> {
   return apiFetch<AuthResponse>("/auth/login", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export async function verifyEmail(email: string, code: string): Promise<AuthResponse> {
+  return apiFetch<AuthResponse>("/auth/verify", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
+  });
+}
+
+export async function resendVerificationCode(email: string): Promise<RegisterAcceptedResponse> {
+  return apiFetch<RegisterAcceptedResponse>("/auth/resend-code", {
+    method: "POST",
+    body: JSON.stringify({ email }),
   });
 }
 

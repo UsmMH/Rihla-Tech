@@ -39,9 +39,9 @@ def validate_email_format(email: str) -> str:
         if not label or not _DOMAIN_LABEL.fullmatch(label):
             raise ValueError("Enter a valid email address.")
 
-    tld = labels[-1]
-    # Reject likely typos like user@gmail.co (single-label TLD must be 3+ chars).
-    if len(labels) == 2 and len(tld) < 3:
+    tld = labels[-1].lower()
+    # Reject likely typos like user@gmail.co while allowing real 2-letter ccTLDs (.sa, .de, .io, .ai).
+    if len(labels) == 2 and len(tld) == 2 and tld == "co":
         raise ValueError("Enter a valid email address.")
 
     return cleaned.lower()

@@ -9,6 +9,7 @@ import { lightTheme } from "@/themes";
 type LoginPageProps = {
   onSuccess: () => void;
   onGoRegister: () => void;
+  onUnverified: (email: string) => void;
 };
 
 const theme = lightTheme;
@@ -27,7 +28,7 @@ const labelStyle = {
   fontWeight: 500,
 };
 
-export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
+export default function LoginPage({ onSuccess, onGoRegister, onUnverified }: LoginPageProps) {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,12 +50,17 @@ export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
       return;
     }
 
+    const normalizedEmail = normalizeEmail(email);
     setIsSubmitting(true);
 
     try {
-      await login({ email: normalizeEmail(email), password });
+      await login({ email: normalizedEmail, password });
       onSuccess();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        onUnverified(normalizedEmail);
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Login failed");
     } finally {
       setIsSubmitting(false);

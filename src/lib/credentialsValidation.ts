@@ -24,9 +24,9 @@ function isValidEmailFormat(email: string): boolean {
     return false;
   }
 
-  const tld = labels[labels.length - 1];
-  // Reject likely typos like user@gmail.co (single-label TLD must be 3+ chars).
-  if (labels.length === 2 && tld.length < 3) return false;
+  const tld = labels[labels.length - 1].toLowerCase();
+  // Reject likely typos like user@gmail.co while allowing real 2-letter ccTLDs (.sa, .de, .io, .ai).
+  if (labels.length === 2 && tld.length === 2 && tld === "co") return false;
 
   return true;
 }

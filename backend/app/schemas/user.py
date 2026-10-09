@@ -17,6 +17,7 @@ class UserPublic(BaseModel):
     last_name: str
     phone_num: str | None
     is_admin: bool
+    is_verified: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -56,6 +57,42 @@ class UserLogin(BaseModel):
     @field_validator("email", mode="before")
     @classmethod
     def normalize_login_email(cls, value: str) -> str:
+        if isinstance(value, str):
+            return validate_email_format(value)
+        return value
+
+
+class RegisterAcceptedResponse(BaseModel):
+    email: EmailStr
+    message: str
+
+
+class EmailVerificationRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_verify_email(cls, value: str) -> str:
+        if isinstance(value, str):
+            return validate_email_format(value)
+        return value
+
+    @field_validator("code")
+    @classmethod
+    def check_code_format(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned.isdigit() or len(cleaned) != 6:
+            raise ValueError("Enter the 6-digit code.")
+        return cleaned
+
+
+class ResendCodeRequest(BaseModel):
+    email: EmailStr
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_resend_email(cls, value: str) -> str:
         if isinstance(value, str):
             return validate_email_format(value)
         return value

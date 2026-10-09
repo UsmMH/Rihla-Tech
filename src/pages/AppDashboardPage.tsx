@@ -12,7 +12,7 @@ import { listTrips, type TripListItem } from "@/lib/trips";
 type AppDashboardPageProps = {
   onNavigate: (tab: AppTab) => void;
   onPlanTrip: () => void;
-  onOpenTrip: (tripPlanId: number) => void;
+  onOpenTrip: (tripPlanId: number, hasDestination: boolean) => void;
 };
 
 function formatDateRange(start: string | null, end: string | null): string {
@@ -174,7 +174,7 @@ export default function AppDashboardPage({ onNavigate, onPlanTrip, onOpenTrip }:
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
-                onClick={() => onOpenTrip(trip.id)}
+                onClick={() => onOpenTrip(trip.id, Boolean(trip.destination))}
                 className="w-full rounded-2xl px-4 py-4 flex items-center gap-3 text-left cursor-pointer"
                 style={{
                   background: theme.activityCardBg,

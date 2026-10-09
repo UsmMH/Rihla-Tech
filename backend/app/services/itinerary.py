@@ -1,9 +1,9 @@
 import logging
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete
+from sqlalchemy import delete, or_, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.place import Place
@@ -469,6 +469,34 @@ def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailRes
     return _build_response(trip, places, source=source, fallback_reason=None)
 
 
+# How long a trip can sit in "generating" before we assume the request that
+# claimed it crashed/timed out and allow a new attempt to reclaim it.
+GENERATION_LOCK_TIMEOUT = timedelta(minutes=3)
+
+
+def _claim_generation_slot(db: Session, trip: TripPlan) -> None:
+    """Atomically flip the trip to status="generating" so a second concurrent
+    /trips/{id}/generate call (e.g. user backs out mid-generation and re-opens
+    the trip from My Trips before the first request finishes) can't also run
+    the LLM + persist step and create duplicate places for every day."""
+    stale_cutoff = datetime.now(timezone.utc) - GENERATION_LOCK_TIMEOUT
+    result = db.execute(
+        update(TripPlan)
+        .where(
+            TripPlan.id == trip.id,
+            or_(TripPlan.status != "generating", TripPlan.updated_at < stale_cutoff),
+        )
+        .values(status="generating")
+    )
+    db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This trip's itinerary is already being generated. Please wait a moment and try again.",
+        )
+    db.refresh(trip)
+
+
 def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTripResponse:
     trip = _get_trip_for_user(db, user, trip_plan_id)
 
@@ -478,36 +506,48 @@ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTr
             detail="Trip destination is required before generating an itinerary",
         )
 
-    source = "mock"
-    fallback_reason: str | None = None
-    tags_override: str | None = None
-    payload: dict
+    previous_status = trip.status
+    _claim_generation_slot(db, trip)
 
-    if llm_configured():
-        try:
-            payload = _ai_itinerary(trip)
-            source = get_llm_provider()
-            tags_override = payload.get("tags") if isinstance(payload.get("tags"), str) else None
-        except Exception as exc:
-            fallback_reason = f"{type(exc).__name__}: {exc}"
-            logger.warning(
-                "LLM itinerary generation failed (provider=%s model=%s), using mock: %s",
-                get_llm_provider(),
-                get_llm_model(),
-                fallback_reason,
-            )
+    try:
+        source = "mock"
+        fallback_reason: str | None = None
+        tags_override: str | None = None
+        payload: dict
+
+        if llm_configured():
+            try:
+                payload = _ai_itinerary(trip)
+                source = get_llm_provider()
+                tags_override = payload.get("tags") if isinstance(payload.get("tags"), str) else None
+            except Exception as exc:
+                fallback_reason = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    "LLM itinerary generation failed (provider=%s model=%s), using mock: %s",
+                    get_llm_provider(),
+                    get_llm_model(),
+                    fallback_reason,
+                )
+                payload = _mock_itinerary(trip)
+                tags_override = payload.get("tags")
+        else:
+            fallback_reason = "No LLM API key configured for provider " + get_llm_provider()
+            logger.info("LLM not configured; using mock itinerary")
             payload = _mock_itinerary(trip)
             tags_override = payload.get("tags")
-    else:
-        fallback_reason = "No LLM API key configured for provider " + get_llm_provider()
-        logger.info("LLM not configured; using mock itinerary")
-        payload = _mock_itinerary(trip)
-        tags_override = payload.get("tags")
 
-    places = _persist_itinerary(db, trip, payload)
-    trip.status = "itinerary_generated"
-    trip.itinerary_source = source
-    db.commit()
+        places = _persist_itinerary(db, trip, payload)
+        trip.status = "itinerary_generated"
+        trip.itinerary_source = source
+        db.commit()
+    except Exception:
+        # Release the "generating" lock immediately instead of making the next
+        # attempt wait out the full staleness timeout.
+        db.rollback()
+        db.execute(update(TripPlan).where(TripPlan.id == trip.id).values(status=previous_status))
+        db.commit()
+        raise
+
     db.refresh(trip)
     places = list(trip.places)
 

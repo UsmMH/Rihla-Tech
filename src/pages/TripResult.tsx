@@ -18,6 +18,43 @@ import { enrichTripPlaces, generateTrip, getTrip, getTripFlights, getTripHotels,
 import { shareTrip, unshareTrip } from "@/lib/community";
 import type { AppTab } from "@/lib/navigation";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Backend returns 409 when another request is already generating this trip's
+// itinerary (e.g. user backed out and re-opened the trip before the first
+// attempt finished). Poll until it completes instead of surfacing a dead-end
+// error that would otherwise require a manual retry.
+async function waitForItineraryReady(tripPlanId: number): Promise<TripDetail> {
+  const maxAttempts = 20; // ~60s at 3s intervals, matches expected generation time
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await sleep(3000);
+    try {
+      const trip = await getTrip(tripPlanId);
+      if (tripHasItineraryActivities(trip)) {
+        return trip;
+      }
+    } catch (err: unknown) {
+      if (!(err instanceof ApiError) || err.status !== 404) {
+        throw err;
+      }
+    }
+  }
+  throw new ApiError(409, "Itinerary generation is taking longer than expected. Please try again.");
+}
+
+async function generateOrWaitForItinerary(tripPlanId: number): Promise<TripDetail> {
+  try {
+    return await generateTrip(tripPlanId);
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.status === 409) {
+      return waitForItineraryReady(tripPlanId);
+    }
+    throw err;
+  }
+}
+
 type TripResultProps = {
   tripPlanId: number;
   onBack: () => void;
@@ -346,10 +383,10 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
       }
 
       setLoadingPhase("generate");
-      let result = await generateTrip(tripPlanId);
+      let result = await generateOrWaitForItinerary(tripPlanId);
       if (!tripHasItineraryActivities(result) && itineraryRetryRef.current < 1) {
         itineraryRetryRef.current += 1;
-        result = await generateTrip(tripPlanId);
+        result = await generateOrWaitForItinerary(tripPlanId);
       }
 
       setTrip(result);
@@ -369,7 +406,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
     setLoadingPhase("generate");
     setError(null);
     try {
-      const result = await generateTrip(tripPlanId);
+      const result = await generateOrWaitForItinerary(tripPlanId);
       setTrip(result);
       if (!tripHasItineraryActivities(result)) {
         setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
@@ -481,7 +518,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={loadItinerary}
+              onClick={() => loadItinerary()}
               className="px-4 py-2.5 rounded-xl"
               style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, color: "#fff", border: "none", fontFamily: "system-ui, sans-serif" }}
             >

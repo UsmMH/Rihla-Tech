@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     mapbox_access_token: str | None = None
     duffel_access_token: str | None = None
+    resend_api_key: str | None = None
+    resend_from_email: str = "RihlaTech <onboarding@resend.dev>"
 
     @property
     def cors_origin_list(self) -> list[str]:

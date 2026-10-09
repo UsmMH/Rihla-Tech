@@ -64,6 +64,47 @@ def _ensure_schema_patches() -> None:
                 "ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS is_verified BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS verification_code_hash VARCHAR(64)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS verification_code_expires_at TIMESTAMPTZ"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS verification_attempts INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS verification_last_sent_at TIMESTAMPTZ"
+            )
+        )
+        # Legacy accounts (pre email-verification): no pending code — keep them able to log in.
+        conn.execute(
+            text(
+                "UPDATE users SET is_verified = TRUE "
+                "WHERE is_verified = FALSE "
+                "AND verification_code_hash IS NULL "
+                "AND verification_code_expires_at IS NULL "
+                "AND verification_last_sent_at IS NULL "
+                "AND verification_attempts = 0"
+            )
+        )
 
 
 @asynccontextmanager
