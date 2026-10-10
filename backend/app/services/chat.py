@@ -43,7 +43,7 @@ CONFIRM_RE = re.compile(
     r"^(?:"
     r"yes please|ok do it|let'?s do it|sounds good|go ahead|that works|"
     r"please do|do it|update it|adjust it|confirm|proceed|apply|"
-    r"please|thanks|yeah|yep|yup|sure|okay|yes|ok"
+    r"yeah|yep|yup|sure|okay|yes|ok"
     r")[\s.!?]*$",
     re.IGNORECASE,
 )
