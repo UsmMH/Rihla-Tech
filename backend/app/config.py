@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     mapbox_access_token: str | None = None
     duffel_access_token: str | None = None
+    serpapi_api_key: str | None = None
+    serpapi_mock: bool = False
+    serpapi_monthly_cap: int = 210
+    serpapi_hourly_cap: int = 45
+    serpapi_user_monthly_cap: int = 30
+    serpapi_cache_ttl_hours: int = 24
     resend_api_key: str | None = None
     resend_from_email: str = "RihlaTech <onboarding@resend.dev>"
     require_email_verification: bool = True

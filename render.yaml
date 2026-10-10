@@ -28,6 +28,12 @@ services:
         sync: false
       - key: DUFFEL_ACCESS_TOKEN
         sync: false
+      - key: SERPAPI_API_KEY
+        sync: false
+      - key: SERPAPI_MOCK
+        value: "false"
+      - key: SERPAPI_MONTHLY_CAP
+        value: "210"
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL
