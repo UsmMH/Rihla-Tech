@@ -5,6 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal
+from app.models.chat_message import ChatMessage  # noqa: F401 — register table
+from app.models.community import TripComment, TripSave, TripVote  # noqa: F401
 from app.models.trip_plan import TripPlan
 from app.services.itinerary import _ai_itinerary
 from app.services.llm import get_llm_model, get_llm_provider

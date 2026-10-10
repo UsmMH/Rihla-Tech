@@ -1,7 +1,6 @@
 import json
 import logging
 import re
-import time
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
@@ -12,7 +11,7 @@ from app.models.user import User
 from app.schemas.trip import ChatMessagePublic, ChatMessageResponse
 from app.services.apply_edit import apply_itinerary_edit
 from app.services.destinations import _trip_context
-from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
+from app.services.llm import CHAT_TIMEOUT, LLMError, complete_chat, get_llm_provider, llm_configured
 from app.services.llm_json import parse_llm_json_object
 
 logger = logging.getLogger(__name__)
@@ -248,20 +247,6 @@ def chat_with_trip(
 
     _supersede_pending_edits(db, trip_plan_id, user.id)
 
-    client = get_llm_client()
-    if client is None:
-        _save_message(db, trip_plan_id=trip_plan_id, user_id=user.id, role="assistant", content=MOCK_REPLY)
-        return ChatMessageResponse(
-            message=MOCK_REPLY,
-            source="mock",
-            fallback_reason="LLM client unavailable",
-            proposes_edit=False,
-            apply_instruction=None,
-            itinerary_updated=False,
-            trip=None,
-        )
-
-    model = get_llm_model()
     system = f"""You are RihlaTech AI, a helpful travel assistant for a trip to {destination}.
 Answer concisely (2-4 sentences unless detail is needed). Be practical and friendly.
 You cannot book flights or hotels.
@@ -293,59 +278,52 @@ Current itinerary:
 
     messages = [{"role": "system", "content": system}, *_history_for_llm(history), {"role": "user", "content": text}]
 
-    last_error: Exception | None = None
-    for attempt in range(2):
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
+    try:
+        raw = str(
+            complete_chat(
+                messages,
                 temperature=0.5,
                 max_tokens=1024,
+                timeout=CHAT_TIMEOUT,
             )
-            raw = (response.choices[0].message.content or "").strip()
-            if not raw:
-                raise ValueError("Empty LLM response")
-
-            try:
-                parsed = parse_llm_json_object(raw)
-                reply = str(parsed.get("reply", "")).strip() or raw
-                proposes_edit = bool(parsed.get("proposes_edit", False))
-                apply_instruction = parsed.get("apply_instruction")
-                if apply_instruction is not None:
-                    apply_instruction = str(apply_instruction).strip() or None
-                if proposes_edit and not apply_instruction:
-                    proposes_edit = False
-            except (json.JSONDecodeError, ValueError, TypeError):
-                reply = raw
+        ).strip()
+        try:
+            parsed = parse_llm_json_object(raw)
+            reply = str(parsed.get("reply", "")).strip() or raw
+            proposes_edit = bool(parsed.get("proposes_edit", False))
+            apply_instruction = parsed.get("apply_instruction")
+            if apply_instruction is not None:
+                apply_instruction = str(apply_instruction).strip() or None
+            if proposes_edit and not apply_instruction:
                 proposes_edit = False
-                apply_instruction = None
+        except (json.JSONDecodeError, ValueError, TypeError):
+            reply = raw
+            proposes_edit = False
+            apply_instruction = None
 
-            assistant_row = _save_message(
-                db,
-                trip_plan_id=trip_plan_id,
-                user_id=user.id,
-                role="assistant",
-                content=reply,
-                proposes_edit=proposes_edit,
-                apply_instruction=apply_instruction,
-            )
-            return ChatMessageResponse(
-                message=reply,
-                source=get_llm_provider(),
-                fallback_reason=None,
-                proposes_edit=proposes_edit,
-                apply_instruction=apply_instruction,
-                assistant_message_id=assistant_row.id,
-                itinerary_updated=False,
-                trip=None,
-            )
-        except Exception as exc:
-            last_error = exc
-            logger.warning("Chat attempt %s failed: %s", attempt + 1, exc)
-            if attempt < 1:
-                time.sleep(2)
+        assistant_row = _save_message(
+            db,
+            trip_plan_id=trip_plan_id,
+            user_id=user.id,
+            role="assistant",
+            content=reply,
+            proposes_edit=proposes_edit,
+            apply_instruction=apply_instruction,
+        )
+        return ChatMessageResponse(
+            message=reply,
+            source=get_llm_provider(),
+            fallback_reason=None,
+            proposes_edit=proposes_edit,
+            apply_instruction=apply_instruction,
+            assistant_message_id=assistant_row.id,
+            itinerary_updated=False,
+            trip=None,
+        )
+    except LLMError as exc:
+        fallback_reason = f"{type(exc).__name__}: {exc}"
+        logger.warning("Chat LLM failed: %s", exc)
 
-    fallback_reason = f"{type(last_error).__name__}: {last_error}" if last_error else "Unknown error"
     _save_message(db, trip_plan_id=trip_plan_id, user_id=user.id, role="assistant", content=MOCK_REPLY)
     return ChatMessageResponse(
         message=MOCK_REPLY,

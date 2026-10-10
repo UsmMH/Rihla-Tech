@@ -1,5 +1,4 @@
 import logging
-import time
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -19,10 +18,9 @@ from app.schemas.trip import (
 )
 from app.services.geocoding import mapbox_configured
 from app.services.destinations import _trip_context
-from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
+from app.services.llm import ITINERARY_TIMEOUT, complete_chat, get_llm_model, get_llm_provider, llm_configured
 from app.services.llm_json import (
     ITINERARY_MAX_TOKENS,
-    is_retryable_llm_error,
     itinerary_max_tokens,
     parse_llm_itinerary_object,
 )
@@ -138,13 +136,8 @@ def _mock_itinerary(trip: TripPlan) -> dict:
 
 
 def _ai_itinerary(trip: TripPlan) -> dict:
-    client = get_llm_client()
-    if client is None:
-        raise RuntimeError("No LLM client configured")
-
     num_days = _trip_day_count(trip)
     destination = trip.destination or "the chosen destination"
-    model = get_llm_model()
 
     prompt = f"""Create a {num_days}-day travel itinerary for {destination}.
 Return JSON only with this shape:
@@ -186,35 +179,18 @@ Preferences:
 {_trip_context(trip)}
 """
 
-    last_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            token_budget = itinerary_max_tokens(num_days)
-            if attempt > 0:
-                token_budget = min(ITINERARY_MAX_TOKENS, token_budget + 2048 * attempt)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are a travel planner. Activity names must be real venue or landmark names, never generic labels like 'Food Tour' or 'Sunset Views'. Respond with valid JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.5,
-                max_tokens=token_budget,
-            )
-            content = response.choices[0].message.content or ""
-            return parse_llm_itinerary_object(content, expected_days=num_days)
-        except Exception as exc:
-            last_error = exc
-            if is_retryable_llm_error(exc) and attempt < 2:
-                wait = 2 * (attempt + 1)
-                logger.info("LLM itinerary attempt %s failed, retrying in %ss: %s", attempt + 1, wait, exc)
-                time.sleep(wait)
-                continue
-            raise
-
-    if last_error:
-        raise last_error
-    raise RuntimeError("LLM request failed")
+    return complete_chat(
+        [
+            {"role": "system", "content": "You are a travel planner. Activity names must be real venue or landmark names, never generic labels like 'Food Tour' or 'Sunset Views'. Respond with valid JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.5,
+        max_tokens=itinerary_max_tokens(num_days),
+        timeout=ITINERARY_TIMEOUT,
+        token_bump=2048,
+        token_cap=ITINERARY_MAX_TOKENS,
+        parse=lambda content: parse_llm_itinerary_object(content, expected_days=num_days),
+    )
 
 
 def _persist_itinerary(

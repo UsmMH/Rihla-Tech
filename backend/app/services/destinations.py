@@ -1,5 +1,4 @@
 import logging
-import time
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -7,8 +6,8 @@ from sqlalchemy.orm import Session
 from app.models.trip_plan import TripPlan
 from app.models.user import User
 from app.schemas.trip import DestinationSuggestion, SuggestDestinationsResponse
-from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
-from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_array
+from app.services.llm import ITINERARY_TIMEOUT, complete_chat, get_llm_model, get_llm_provider, llm_configured
+from app.services.llm_json import LLM_MAX_TOKENS, parse_llm_json_array
 from app.services.theme_preferences import decode_theme_preferences
 
 logger = logging.getLogger(__name__)
@@ -77,11 +76,6 @@ def _mock_suggestions(trip: TripPlan) -> list[DestinationSuggestion]:
 
 
 def _ai_suggestions(trip: TripPlan) -> list[DestinationSuggestion]:
-    client = get_llm_client()
-    if client is None:
-        raise RuntimeError("No LLM client configured")
-
-    model = get_llm_model()
     prompt = f"""Based on these travel preferences, suggest exactly 3 destination cities.
 Return JSON only: an array of 3 objects with keys "city", "country", "blurb".
 Each blurb must be ONE short sentence (max 100 characters).
@@ -91,33 +85,20 @@ Preferences:
 {_trip_context(trip)}
 """
 
-    last_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are a travel advisor. Respond with valid JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.5,
-                max_tokens=LLM_MAX_TOKENS,
-            )
-            content = response.choices[0].message.content or ""
-            raw = parse_llm_json_array(content, min_items=3)
-            return [DestinationSuggestion.model_validate(item) for item in raw[:3]]
-        except Exception as exc:
-            last_error = exc
-            if is_retryable_llm_error(exc) and attempt < 2:
-                wait = 2 * (attempt + 1)
-                logger.info("LLM attempt %s failed, retrying in %ss: %s", attempt + 1, wait, exc)
-                time.sleep(wait)
-                continue
-            raise
+    def parse_suggestions(content: str) -> list[DestinationSuggestion]:
+        raw = parse_llm_json_array(content, min_items=3)
+        return [DestinationSuggestion.model_validate(item) for item in raw[:3]]
 
-    if last_error:
-        raise last_error
-    raise RuntimeError("LLM request failed")
+    return complete_chat(
+        [
+            {"role": "system", "content": "You are a travel advisor. Respond with valid JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.5,
+        max_tokens=LLM_MAX_TOKENS,
+        timeout=ITINERARY_TIMEOUT,
+        parse=parse_suggestions,
+    )
 
 
 def suggest_destinations(

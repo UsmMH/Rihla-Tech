@@ -1,6 +1,3 @@
-import logging
-import time
-
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
@@ -9,10 +6,8 @@ from app.models.user import User
 from app.schemas.trip import TripDetailResponse
 from app.services.destinations import _trip_context
 from app.services.itinerary import get_trip_detail
-from app.services.llm import get_llm_client, get_llm_model, llm_configured
-from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_object
-
-logger = logging.getLogger(__name__)
+from app.services.llm import ITINERARY_TIMEOUT, LLMError, complete_chat, llm_configured
+from app.services.llm_json import LLM_MAX_TOKENS, parse_llm_json_object
 
 
 def _itinerary_with_ids(trip: TripPlan) -> str:
@@ -55,12 +50,7 @@ def apply_itinerary_edit(
             detail="LLM not configured — cannot apply itinerary edits",
         )
 
-    client = get_llm_client()
-    if client is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM client unavailable")
-
     destination = trip.destination or "the destination"
-    model = get_llm_model()
     text = instruction.strip()
 
     prompt = f"""Apply this itinerary change for a trip to {destination}:
@@ -95,34 +85,22 @@ Current places (use place_id):
 {_itinerary_with_ids(trip)}
 """
 
-    last_error: Exception | None = None
-    payload: dict | None = None
-    for attempt in range(3):
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are a travel planner. Respond with valid JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.4,
-                max_tokens=LLM_MAX_TOKENS,
-            )
-            content = response.choices[0].message.content or ""
-            payload = parse_llm_json_object(content)
-            break
-        except Exception as exc:
-            last_error = exc
-            if is_retryable_llm_error(exc) and attempt < 2:
-                time.sleep(2 * (attempt + 1))
-                continue
-            raise
-
-    if payload is None:
+    try:
+        payload = complete_chat(
+            [
+                {"role": "system", "content": "You are a travel planner. Respond with valid JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.4,
+            max_tokens=LLM_MAX_TOKENS,
+            timeout=ITINERARY_TIMEOUT,
+            parse=parse_llm_json_object,
+        )
+    except LLMError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to parse edit response: {last_error}",
-        )
+            detail=f"Failed to parse edit response: {exc}",
+        ) from exc
 
     updates = payload.get("updates", [])
     if not isinstance(updates, list) or not updates:
