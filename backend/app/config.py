@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     serpapi_hourly_cap: int = 45
     serpapi_user_monthly_cap: int = 30
     serpapi_cache_ttl_hours: int = 24
+    # development | production — empty locally; Render sets APP_ENV=production (see is_production_environment)
+    app_env: str = ""
     resend_api_key: str | None = None
     resend_from_email: str = "RihlaTech <onboarding@resend.dev>"
     require_email_verification: bool = True

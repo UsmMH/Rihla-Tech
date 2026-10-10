@@ -29,21 +29,28 @@ def _client_key(request: Request) -> str:
     return "unknown"
 
 
-def enforce_rate_limit(request: Request, scope: str, *, max_calls: int, window_seconds: int) -> None:
-    client = _client_key(request)
-    key = f"{scope}:{client}"
+def enforce_rate_limit(
+    request: Request,
+    scope: str,
+    *,
+    max_calls: int,
+    window_seconds: int,
+    key: str | None = None,
+) -> None:
+    client = key if key is not None else _client_key(request)
+    bucket_key = f"{scope}:{client}"
     now = time.monotonic()
     window_start = now - window_seconds
 
     with _LOCK:
-        hits = [t for t in _BUCKETS.get(key, []) if t > window_start]
+        hits = [t for t in _BUCKETS.get(bucket_key, []) if t > window_start]
         if len(hits) >= max_calls:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many requests. Please try again later.",
             )
         hits.append(now)
-        _BUCKETS[key] = hits
+        _BUCKETS[bucket_key] = hits
         for stale_key, timestamps in list(_BUCKETS.items()):
             recent = [t for t in timestamps if t > window_start]
             if recent:
