@@ -11,6 +11,7 @@ from app.data.quiz_seed import seed_questions
 from app.database import SessionLocal
 from app.models.chat_message import ChatMessage  # noqa: F401 — register table
 from app.models.community import TripComment, TripSave, TripVote  # noqa: F401
+from app.models.serpapi import SerpApiCache, SerpApiUsage  # noqa: F401 — register tables
 from app.routers import admin, auth, chat, community, health, places, quiz, trips
 
 
@@ -28,6 +29,9 @@ _SCHEMA_COLUMNS = (
     ("users", "verification_code_expires_at", "TIMESTAMPTZ"),
     ("users", "verification_attempts", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "verification_last_sent_at", "TIMESTAMPTZ"),
+    ("trip_plans", "selected_hotel", "VARCHAR(255)"),
+    ("trip_plans", "origin_airport", "VARCHAR(3)"),
+    ("trip_plans", "destination_airport", "VARCHAR(3)"),
 )
 
 
