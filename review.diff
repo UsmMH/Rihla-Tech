@@ -1,0 +1,3895 @@
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 15b4073..c770b66 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -24,6 +24,8 @@ class Settings(BaseSettings):
+     openai_api_key: str | None = None
+     mapbox_access_token: str | None = None
+     duffel_access_token: str | None = None
++    resend_api_key: str | None = None
++    resend_from_email: str = "RihlaTech <onboarding@resend.dev>"
+ 
+     @property
+     def cors_origin_list(self) -> list[str]:
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 4d11904..f053363 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -14,54 +14,36 @@ from app.models.community import TripComment, TripSave, TripVote  # noqa: F401
+ from app.routers import admin, auth, chat, community, health, places, quiz, trips
+ 
+ 
++_SCHEMA_COLUMNS = (
++    ("trip_plans", "itinerary_source", "VARCHAR(30)"),
++    ("places", "map_search", "VARCHAR(255)"),
++    ("places", "location_hint", "VARCHAR(255)"),
++    ("places", "mapbox_id", "VARCHAR(120)"),
++    ("places", "location_confirmed", "BOOLEAN DEFAULT FALSE"),
++    ("trip_plans", "is_shared", "BOOLEAN DEFAULT FALSE"),
++    ("trip_plans", "share_caption", "VARCHAR(500)"),
++    ("trip_plans", "shared_at", "TIMESTAMPTZ"),
++    ("users", "is_verified", "BOOLEAN NOT NULL DEFAULT FALSE"),
++    ("users", "verification_code_hash", "VARCHAR(64)"),
++    ("users", "verification_code_expires_at", "TIMESTAMPTZ"),
++    ("users", "verification_attempts", "INTEGER NOT NULL DEFAULT 0"),
++    ("users", "verification_last_sent_at", "TIMESTAMPTZ"),
++)
++
++
+ def _ensure_schema_patches() -> None:
+     with engine.begin() as conn:
++        for table, column, spec in _SCHEMA_COLUMNS:
++            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {spec}"))
++        # Legacy accounts (pre email-verification): no pending code — keep them able to log in.
+         conn.execute(
+             text(
+-                "ALTER TABLE trip_plans "
+-                "ADD COLUMN IF NOT EXISTS itinerary_source VARCHAR(30)"
+-            )
+-        )
+-        conn.execute(
+-            text(
+-                "ALTER TABLE places "
+-                "ADD COLUMN IF NOT EXISTS map_search VARCHAR(255)"
+-            )
+-        )
+-        conn.execute(
+-            text(
+-                "ALTER TABLE places "
+-                "ADD COLUMN IF NOT EXISTS location_hint VARCHAR(255)"
+-            )
+-        )
+-        conn.execute(
+-            text(
+-                "ALTER TABLE places "
+-                "ADD COLUMN IF NOT EXISTS mapbox_id VARCHAR(120)"
+-            )
+-        )
+-        conn.execute(
+-            text(
+-                "ALTER TABLE places "
+-                "ADD COLUMN IF NOT EXISTS location_confirmed BOOLEAN DEFAULT FALSE"
+-            )
+-        )
+-        conn.execute(
+-            text(
+-                "ALTER TABLE trip_plans "
+-                "ADD COLUMN IF NOT EXISTS is_shared BOOLEAN DEFAULT FALSE"
+-            )
+-        )
+-        conn.execute(
+-            text(
+-                "ALTER TABLE trip_plans "
+-                "ADD COLUMN IF NOT EXISTS share_caption VARCHAR(500)"
+-            )
+-        )
+-        conn.execute(
+-            text(
+-                "ALTER TABLE trip_plans "
+-                "ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ"
++                "UPDATE users SET is_verified = TRUE "
++                "WHERE is_verified = FALSE "
++                "AND verification_code_hash IS NULL "
++                "AND verification_code_expires_at IS NULL "
++                "AND verification_last_sent_at IS NULL "
++                "AND verification_attempts = 0"
+             )
+         )
+ 
+diff --git a/backend/app/models/user.py b/backend/app/models/user.py
+index a7aa4a3..6d8a188 100644
+--- a/backend/app/models/user.py
++++ b/backend/app/models/user.py
+@@ -1,6 +1,6 @@
+ from datetime import datetime
+ 
+-from sqlalchemy import Boolean, DateTime, String, func
++from sqlalchemy import Boolean, DateTime, Integer, String, func
+ from sqlalchemy.orm import Mapped, mapped_column
+ 
+ from app.database import Base
+@@ -16,6 +16,11 @@ class User(Base):
+     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
+     phone_num: Mapped[str | None] = mapped_column(String(30), nullable=True)
+     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
++    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
++    verification_code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
++    verification_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    verification_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
++    verification_last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+     created_at: Mapped[datetime] = mapped_column(
+         DateTime(timezone=True),
+         server_default=func.now(),
+diff --git a/backend/app/routers/auth.py b/backend/app/routers/auth.py
+index 243b93e..a76daf8 100644
+--- a/backend/app/routers/auth.py
++++ b/backend/app/routers/auth.py
+@@ -1,18 +1,37 @@
+-from fastapi import APIRouter, Depends, HTTPException, status
++from fastapi import APIRouter, Depends, HTTPException, Request, status
+ from sqlalchemy.orm import Session
+ 
+ from app.database import get_db
+ from app.dependencies.auth import get_current_user
+ from app.models.user import User
+ from app.schemas.auth import TokenResponse
+-from app.schemas.user import UserLogin, UserPublic, UserRegister
++from app.schemas.user import (
++    EmailVerificationRequest,
++    RegisterAcceptedResponse,
++    ResendCodeRequest,
++    UserLogin,
++    UserPublic,
++    UserRegister,
++)
+ from app.services.auth import create_access_token, create_user, get_user_by_email, verify_password
++from app.services.email import send_verification_email
++from app.services.email_verification import (
++    consume_verification_code,
++    issue_verification_code,
++    resend_cooldown_seconds_remaining,
++)
++from app.services.rate_limit import enforce_rate_limit
+ 
+ router = APIRouter(prefix="/auth", tags=["auth"])
+ 
+ 
+-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+-def register(payload: UserRegister, db: Session = Depends(get_db)) -> TokenResponse:
++@router.post("/register", response_model=RegisterAcceptedResponse, status_code=status.HTTP_201_CREATED)
++def register(
++    payload: UserRegister,
++    request: Request,
++    db: Session = Depends(get_db),
++) -> RegisterAcceptedResponse:
++    enforce_rate_limit(request, "auth-register", max_calls=10, window_seconds=60)
+     if get_user_by_email(db, payload.email):
+         raise HTTPException(
+             status_code=status.HTTP_409_CONFLICT,
+@@ -27,10 +46,67 @@ def register(payload: UserRegister, db: Session = Depends(get_db)) -> TokenRespo
+         last_name=payload.last_name,
+         phone_num=payload.phone_num,
+     )
++    code = issue_verification_code(db, user)
++    send_verification_email(user.email, code)
++    return RegisterAcceptedResponse(
++        email=user.email,
++        message="We sent a 6-digit verification code to your email.",
++    )
++
++
++@router.post("/verify", response_model=TokenResponse)
++def verify_email(
++    payload: EmailVerificationRequest,
++    request: Request,
++    db: Session = Depends(get_db),
++) -> TokenResponse:
++    enforce_rate_limit(request, "auth-verify", max_calls=20, window_seconds=60)
++    user = get_user_by_email(db, payload.email)
++    if user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No account found with this email")
++
++    if user.is_verified:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail="This email is already verified. Please log in.",
++        )
++
++    error = consume_verification_code(db, user, payload.code)
++    if error:
++        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
++
+     token = create_access_token(user.id)
+     return TokenResponse(access_token=token, user=UserPublic.model_validate(user))
+ 
+ 
++@router.post("/resend-code", response_model=RegisterAcceptedResponse)
++def resend_code(
++    payload: ResendCodeRequest,
++    request: Request,
++    db: Session = Depends(get_db),
++) -> RegisterAcceptedResponse:
++    enforce_rate_limit(request, "auth-resend", max_calls=10, window_seconds=60)
++    user = get_user_by_email(db, payload.email)
++    if user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No account found with this email")
++    if user.is_verified:
++        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email is already verified. Please log in.")
++
++    wait = resend_cooldown_seconds_remaining(user)
++    if wait > 0:
++        raise HTTPException(
++            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
++            detail=f"Please wait {wait}s before requesting another code.",
++        )
++
++    code = issue_verification_code(db, user)
++    send_verification_email(user.email, code)
++    return RegisterAcceptedResponse(
++        email=user.email,
++        message="A new verification code was sent to your email.",
++    )
++
++
+ @router.post("/login", response_model=TokenResponse)
+ def login(payload: UserLogin, db: Session = Depends(get_db)) -> TokenResponse:
+     user = get_user_by_email(db, payload.email)
+@@ -40,6 +116,12 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> TokenResponse:
+             detail="Invalid email or password",
+         )
+ 
++    if not user.is_verified:
++        raise HTTPException(
++            status_code=status.HTTP_403_FORBIDDEN,
++            detail="Email not verified. Please verify your email to continue.",
++        )
++
+     token = create_access_token(user.id)
+     return TokenResponse(access_token=token, user=UserPublic.model_validate(user))
+ 
+diff --git a/backend/app/routers/places.py b/backend/app/routers/places.py
+index 6513191..a2fbfbd 100644
+--- a/backend/app/routers/places.py
++++ b/backend/app/routers/places.py
+@@ -1,20 +1,10 @@
+-from fastapi import APIRouter, Depends, HTTPException, Query, status
+-from sqlalchemy.orm import Session
++from fastapi import APIRouter, Depends, Query
+ 
+-from app.database import get_db
+ from app.dependencies.auth import get_current_user
+-from app.models.trip_plan import TripPlan
+ from app.models.user import User
+-from app.schemas.trip import ActivityPlaceSearchResult, PlaceSearchResult
++from app.schemas.trip import PlaceSearchResult
+ from app.services.flights import duffel_configured
+-from app.services.geocoding import (
+-    _destination_context,
+-    _resolve_destination_center,
+-    mapbox_configured,
+-    search_activity_places,
+-    search_airports,
+-    search_places,
+-)
++from app.services.geocoding import mapbox_configured, search_airports, search_places
+ 
+ router = APIRouter(prefix="/places", tags=["places"])
+ 
+@@ -34,38 +24,3 @@ def search_origin_places(
+             return []
+         raw = search_places(q)
+     return [PlaceSearchResult.model_validate(item) for item in raw]
+-
+-
+-@router.get("/search-poi", response_model=list[ActivityPlaceSearchResult])
+-def search_activity_poi(
+-    q: str = Query(min_length=2, max_length=120),
+-    trip_plan_id: int = Query(..., ge=1),
+-    db: Session = Depends(get_db),
+-    current_user: User = Depends(get_current_user),
+-) -> list[ActivityPlaceSearchResult]:
+-    if not mapbox_configured():
+-        return []
+-
+-    trip = (
+-        db.query(TripPlan)
+-        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == current_user.id)
+-        .first()
+-    )
+-    if trip is None:
+-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
+-
+-    destination = trip.destination or ""
+-    if not destination:
+-        return []
+-
+-    dest_context = _destination_context(destination)
+-    dest_center, dest_context = _resolve_destination_center(destination, dest_context)
+-    if dest_center is None:
+-        return []
+-
+-    results = search_activity_places(
+-        q,
+-        proximity=dest_center,
+-        country_code=dest_context.get("country_code"),
+-    )
+-    return [ActivityPlaceSearchResult.model_validate(item) for item in results]
+diff --git a/backend/app/routers/trips.py b/backend/app/routers/trips.py
+index c827b50..f097229 100644
+--- a/backend/app/routers/trips.py
++++ b/backend/app/routers/trips.py
+@@ -1,5 +1,5 @@
+-from fastapi import APIRouter, Depends, HTTPException, status
+-from sqlalchemy.orm import Session, joinedload
++from fastapi import APIRouter, Depends, status
++from sqlalchemy.orm import Session
+ 
+ from app.database import get_db
+ from app.dependencies.auth import get_current_user
+@@ -7,8 +7,6 @@ from app.models.user import User
+ from app.schemas.quiz import TripPlanPublic
+ from app.schemas.trip import (
+     ApplyEditRequest,
+-    EditTripRequest,
+-    EditTripResponse,
+     FlightsResponse,
+     GenerateTripRequest,
+     GenerateTripResponse,
+@@ -19,22 +17,17 @@ from app.schemas.trip import (
+     TripDetailResponse,
+     TripListItem,
+     TripListResponse,
+-    UpdatePlaceLocationRequest,
+ )
+ from app.services.destinations import select_destination, suggest_destinations
+-from app.models.trip_plan import TripPlan
+ from app.services.flights import search_flights
+-from app.services.geocoding import enrich_trip_places, mapbox_configured
+ from app.services.hotels import search_hotels
+ from app.services.apply_edit import apply_itinerary_edit
+ from app.services.chat import mark_chat_edit_applied
+-from app.services.edit import edit_trip_alternatives
+ from app.services.itinerary import (
+     delete_trip_plan,
+     generate_itinerary,
+     get_trip_detail,
+     list_user_trips,
+-    update_place_location,
+ )
+ 
+ router = APIRouter(prefix="/trips", tags=["trips"])
+@@ -117,54 +110,6 @@ def get_trip_hotels(
+     return search_hotels(db, current_user, trip_plan_id)
+ 
+ 
+-@router.post("/{trip_plan_id}/enrich-places", response_model=TripDetailResponse)
+-def enrich_trip_places_endpoint(
+-    trip_plan_id: int,
+-    db: Session = Depends(get_db),
+-    current_user: User = Depends(get_current_user),
+-) -> TripDetailResponse:
+-    trip = (
+-        db.query(TripPlan)
+-        .options(joinedload(TripPlan.places))
+-        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == current_user.id)
+-        .first()
+-    )
+-    if trip is None:
+-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
+-
+-    if mapbox_configured():
+-        for place in trip.places:
+-            if place.location_confirmed:
+-                continue
+-            place.latitude = None
+-            place.longitude = None
+-            place.mapbox_id = None
+-        db.commit()
+-        enrich_trip_places(db, trip, force=True)
+-
+-    return get_trip_detail(db, current_user, trip_plan_id)
+-
+-
+-@router.patch("/{trip_plan_id}/places/{place_id}", response_model=TripDetailResponse)
+-def confirm_place_location(
+-    trip_plan_id: int,
+-    place_id: int,
+-    payload: UpdatePlaceLocationRequest,
+-    db: Session = Depends(get_db),
+-    current_user: User = Depends(get_current_user),
+-) -> TripDetailResponse:
+-    return update_place_location(
+-        db,
+-        current_user,
+-        trip_plan_id,
+-        place_id,
+-        label=payload.label,
+-        latitude=payload.latitude,
+-        longitude=payload.longitude,
+-        mapbox_id=payload.mapbox_id,
+-    )
+-
+-
+ @router.post("/{trip_plan_id}/apply-edit", response_model=TripDetailResponse)
+ def apply_trip_edit(
+     trip_plan_id: int,
+@@ -178,16 +123,6 @@ def apply_trip_edit(
+     return result
+ 
+ 
+-@router.post("/{trip_plan_id}/edit", response_model=EditTripResponse)
+-def edit_trip(
+-    trip_plan_id: int,
+-    payload: EditTripRequest,
+-    db: Session = Depends(get_db),
+-    current_user: User = Depends(get_current_user),
+-) -> EditTripResponse:
+-    return edit_trip_alternatives(db, current_user, trip_plan_id, payload.prompt)
+-
+-
+ @router.post("/{trip_plan_id}/destination", response_model=TripPlanPublic)
+ def set_trip_destination(
+     trip_plan_id: int,
+diff --git a/backend/app/schemas/trip.py b/backend/app/schemas/trip.py
+index bd4f156..4744eeb 100644
+--- a/backend/app/schemas/trip.py
++++ b/backend/app/schemas/trip.py
+@@ -1,6 +1,6 @@
+ from datetime import date, datetime
+ 
+-from pydantic import BaseModel, Field
++from pydantic import BaseModel, Field, field_validator
+ 
+ from app.schemas.quiz import TripPlanPublic
+ 
+@@ -202,12 +202,26 @@ class ChatMessageResponse(BaseModel):
+ 
+ class ConsultHistoryItem(BaseModel):
+     role: str
+-    content: str
++    content: str = Field(max_length=2000)
++
++    @field_validator("content", mode="before")
++    @classmethod
++    def cap_content(cls, value: object) -> object:
++        if isinstance(value, str) and len(value) > 2000:
++            return value[:2000]
++        return value
+ 
+ 
+ class ConsultChatRequest(BaseModel):
+     message: str = Field(min_length=1, max_length=4000)
+-    history: list[ConsultHistoryItem] = Field(default_factory=list)
++    history: list[ConsultHistoryItem] = Field(default_factory=list, max_length=20)
++
++    @field_validator("history", mode="before")
++    @classmethod
++    def cap_history(cls, value: object) -> object:
++        if isinstance(value, list) and len(value) > 20:
++            return value[-20:]
++        return value
+ 
+ 
+ class ConsultChatResponse(BaseModel):
+diff --git a/backend/app/schemas/user.py b/backend/app/schemas/user.py
+index f9681f4..6bf4795 100644
+--- a/backend/app/schemas/user.py
++++ b/backend/app/schemas/user.py
+@@ -1,6 +1,7 @@
+ from datetime import datetime
++from typing import Annotated
+ 
+-from pydantic import BaseModel, EmailStr, Field, field_validator
++from pydantic import BaseModel, BeforeValidator, EmailStr, Field, field_validator
+ 
+ from app.services.auth import (
+     PASSWORD_MAX_LENGTH,
+@@ -10,6 +11,15 @@ from app.services.auth import (
+ )
+ 
+ 
++def _normalize_email(value: object) -> object:
++    if isinstance(value, str):
++        return validate_email_format(value)
++    return value
++
++
++NormalizedEmail = Annotated[EmailStr, BeforeValidator(_normalize_email)]
++
++
+ class UserPublic(BaseModel):
+     id: int
+     email: EmailStr
+@@ -17,25 +27,19 @@ class UserPublic(BaseModel):
+     last_name: str
+     phone_num: str | None
+     is_admin: bool
++    is_verified: bool
+     created_at: datetime
+ 
+     model_config = {"from_attributes": True}
+ 
+ 
+ class UserRegister(BaseModel):
+-    email: EmailStr
++    email: NormalizedEmail
+     password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
+     first_name: str = Field(min_length=1, max_length=100)
+     last_name: str = Field(min_length=1, max_length=100)
+     phone_num: str | None = Field(default=None, max_length=30)
+ 
+-    @field_validator("email", mode="before")
+-    @classmethod
+-    def normalize_register_email(cls, value: str) -> str:
+-        if isinstance(value, str):
+-            return validate_email_format(value)
+-        return value
+-
+     @field_validator("password")
+     @classmethod
+     def check_register_password(cls, value: str) -> str:
+@@ -50,12 +54,27 @@ class UserRegister(BaseModel):
+ 
+ 
+ class UserLogin(BaseModel):
+-    email: EmailStr
++    email: NormalizedEmail
+     password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+ 
+-    @field_validator("email", mode="before")
++
++class RegisterAcceptedResponse(BaseModel):
++    email: EmailStr
++    message: str
++
++
++class EmailVerificationRequest(BaseModel):
++    email: NormalizedEmail
++    code: str = Field(min_length=6, max_length=6)
++
++    @field_validator("code")
+     @classmethod
+-    def normalize_login_email(cls, value: str) -> str:
+-        if isinstance(value, str):
+-            return validate_email_format(value)
+-        return value
++    def check_code_format(cls, value: str) -> str:
++        cleaned = value.strip()
++        if not cleaned.isdigit() or len(cleaned) != 6:
++            raise ValueError("Enter the 6-digit code.")
++        return cleaned
++
++
++class ResendCodeRequest(BaseModel):
++    email: NormalizedEmail
+diff --git a/backend/app/services/apply_edit.py b/backend/app/services/apply_edit.py
+index 217a5a6..f1851ba 100644
+--- a/backend/app/services/apply_edit.py
++++ b/backend/app/services/apply_edit.py
+@@ -1,26 +1,13 @@
+-import logging
+-import time
+-
+ from fastapi import HTTPException, status
+-from sqlalchemy.orm import Session, joinedload
++from sqlalchemy.orm import Session
+ 
+-from app.models.place import Place
+ from app.models.trip_plan import TripPlan
+ from app.models.user import User
+ from app.schemas.trip import TripDetailResponse
+-from app.services.destinations import _trip_context
+-from app.services.geocoding import (
+-    _coords_from_activity_payload,
+-    _destination_context,
+-    _resolve_destination_center,
+-    enrich_trip_places,
+-    resolve_place_coordinates,
+-)
+-from app.services.itinerary import get_trip_detail
+-from app.services.llm import get_llm_client, get_llm_model, llm_configured
+-from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_object
+-
+-logger = logging.getLogger(__name__)
++from app.services.destinations import trip_context
++from app.services.itinerary import get_owned_trip, get_trip_detail
++from app.services.llm import ITINERARY_TIMEOUT, LLMError, complete_chat, llm_configured
++from app.services.llm_json import LLM_MAX_TOKENS, parse_llm_json_object
+ 
+ 
+ def _itinerary_with_ids(trip: TripPlan) -> str:
+@@ -42,15 +29,7 @@ def apply_itinerary_edit(
+     trip_plan_id: int,
+     instruction: str,
+ ) -> TripDetailResponse:
+-    trip = (
+-        db.query(TripPlan)
+-        .options(joinedload(TripPlan.places))
+-        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == user.id)
+-        .first()
+-    )
+-    if trip is None:
+-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
+-
++    trip = get_owned_trip(db, user, trip_plan_id)
+     if not trip.places:
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+@@ -63,12 +42,7 @@ def apply_itinerary_edit(
+             detail="LLM not configured — cannot apply itinerary edits",
+         )
+ 
+-    client = get_llm_client()
+-    if client is None:
+-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM client unavailable")
+-
+     destination = trip.destination or "the destination"
+-    model = get_llm_model()
+     text = instruction.strip()
+ 
+     prompt = f"""Apply this itinerary change for a trip to {destination}:
+@@ -82,8 +56,6 @@ Return JSON only:
+       "name": "Official Venue Name",
+       "map_search": "Official Venue Name",
+       "location_hint": "neighborhood",
+-      "latitude": 30.0444,
+-      "longitude": 31.2357,
+       "description": "1-2 sentences",
+       "activity_type": "Culture|Food|Nature|Adventure|Relaxation|Shopping|Nightlife|Scenic",
+       "duration": "e.g. 2 hrs"
+@@ -95,44 +67,32 @@ Rules:
+ - Only include places that should change. Use exact place_id values from the list below.
+ - name and map_search must be the real venue or landmark name (not generic labels like "Food Tour").
+ - Keep venues realistic and mappable in {destination}.
+-- If swapping an activity, update that place_id's fields including coordinates.
++- If swapping an activity, update that place_id's fields.
+ - No markdown outside JSON.
+ 
+ Trip preferences:
+-{_trip_context(trip)}
++{trip_context(trip)}
+ 
+ Current places (use place_id):
+ {_itinerary_with_ids(trip)}
+ """
+ 
+-    last_error: Exception | None = None
+-    payload: dict | None = None
+-    for attempt in range(3):
+-        try:
+-            response = client.chat.completions.create(
+-                model=model,
+-                messages=[
+-                    {"role": "system", "content": "You are a travel planner. Respond with valid JSON only."},
+-                    {"role": "user", "content": prompt},
+-                ],
+-                temperature=0.4,
+-                max_tokens=LLM_MAX_TOKENS,
+-            )
+-            content = response.choices[0].message.content or ""
+-            payload = parse_llm_json_object(content)
+-            break
+-        except Exception as exc:
+-            last_error = exc
+-            if is_retryable_llm_error(exc) and attempt < 2:
+-                time.sleep(2 * (attempt + 1))
+-                continue
+-            raise
+-
+-    if payload is None:
++    try:
++        payload = complete_chat(
++            [
++                {"role": "system", "content": "You are a travel planner. Respond with valid JSON only."},
++                {"role": "user", "content": prompt},
++            ],
++            temperature=0.4,
++            max_tokens=LLM_MAX_TOKENS,
++            timeout=ITINERARY_TIMEOUT,
++            parse=parse_llm_json_object,
++        )
++    except LLMError as exc:
+         raise HTTPException(
+             status_code=status.HTTP_502_BAD_GATEWAY,
+-            detail=f"Failed to parse edit response: {last_error}",
+-        )
++            detail=f"Failed to parse edit response: {exc}",
++        ) from exc
+ 
+     updates = payload.get("updates", [])
+     if not isinstance(updates, list) or not updates:
+@@ -142,11 +102,6 @@ Current places (use place_id):
+         )
+ 
+     places_by_id = {place.id: place for place in trip.places}
+-    dest_center: tuple[float, float] | None = None
+-    dest_context: dict = {}
+-    if trip.destination:
+-        dest_context = _destination_context(trip.destination)
+-        dest_center, dest_context = _resolve_destination_center(trip.destination, dest_context)
+ 
+     changed = 0
+     for item in updates:
+@@ -186,24 +141,6 @@ Current places (use place_id):
+         duration = item.get("duration")
+         if duration is not None:
+             place.duration = str(duration).strip() or place.duration
+-
+-        llm_coords = _coords_from_activity_payload(item, dest_center)
+-        search_name = (place.map_search or place.name).strip()
+-        coords: tuple[float, float] | None = None
+-        if dest_center is not None:
+-            coords = resolve_place_coordinates(
+-                search_name,
+-                location_hint=place.location_hint,
+-                destination=trip.destination or "",
+-                dest_context=dest_context,
+-                dest_center=dest_center,
+-                llm_coords=llm_coords,
+-            )
+-        if coords:
+-            place.latitude, place.longitude = coords
+-        else:
+-            place.latitude = None
+-            place.longitude = None
+         changed += 1
+ 
+     if changed == 0:
+@@ -213,5 +150,4 @@ Current places (use place_id):
+         )
+ 
+     db.commit()
+-    enrich_trip_places(db, trip, force=True)
+     return get_trip_detail(db, user, trip_plan_id)
+diff --git a/backend/app/services/auth.py b/backend/app/services/auth.py
+index 30ed9fb..484dc6d 100644
+--- a/backend/app/services/auth.py
++++ b/backend/app/services/auth.py
+@@ -39,9 +39,9 @@ def validate_email_format(email: str) -> str:
+         if not label or not _DOMAIN_LABEL.fullmatch(label):
+             raise ValueError("Enter a valid email address.")
+ 
+-    tld = labels[-1]
+-    # Reject likely typos like user@gmail.co (single-label TLD must be 3+ chars).
+-    if len(labels) == 2 and len(tld) < 3:
++    tld = labels[-1].lower()
++    # Reject likely typos like user@gmail.co while allowing real 2-letter ccTLDs (.sa, .de, .io, .ai).
++    if len(labels) == 2 and len(tld) == 2 and tld == "co":
+         raise ValueError("Enter a valid email address.")
+ 
+     return cleaned.lower()
+diff --git a/backend/app/services/chat.py b/backend/app/services/chat.py
+index fa9b1a3..1015606 100644
+--- a/backend/app/services/chat.py
++++ b/backend/app/services/chat.py
+@@ -1,23 +1,39 @@
+ import json
+ import logging
+ import re
+-import time
+ 
+ from fastapi import HTTPException, status
+-from sqlalchemy.orm import Session, joinedload
++from sqlalchemy.orm import Session
+ 
+ from app.models.chat_message import ChatMessage
+ from app.models.trip_plan import TripPlan
+ from app.models.user import User
+ from app.schemas.trip import ChatMessagePublic, ChatMessageResponse
+ from app.services.apply_edit import apply_itinerary_edit
+-from app.services.destinations import _trip_context
+-from app.services.edit import _itinerary_summary
+-from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
++from app.services.destinations import trip_context
++from app.services.itinerary import get_owned_trip
++from app.services.llm import CHAT_TIMEOUT, LLMError, complete_chat, get_llm_provider, llm_configured
+ from app.services.llm_json import parse_llm_json_object
+ 
+ logger = logging.getLogger(__name__)
+ 
++
++def _itinerary_summary(trip: TripPlan) -> str:
++    if not trip.places:
++        return "No itinerary generated yet."
++    lines: list[str] = []
++    current_day: int | None = None
++    for place in trip.places:
++        if place.day_number != current_day:
++            current_day = place.day_number
++            theme = place.day_theme or f"Day {current_day}"
++            lines.append(f"Day {current_day} ({theme}):")
++        lines.append(
++            f"  - {place.time_slot} [id={place.id}]: {place.name} ({place.activity_type or 'Activity'})"
++        )
++    return "\n".join(lines)
++
++
+ MOCK_REPLY = (
+     "I'd be happy to help adjust your itinerary! Try asking about specific days, "
+     "activities, budget, or local tips. (AI chat requires an LLM API key in .env)"
+@@ -25,20 +41,14 @@ MOCK_REPLY = (
+ 
+ CONFIRM_RE = re.compile(
+     r"^(yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|please do|apply|"
+-    r"update it|adjust it|sounds good|let'?s do it|that works|confirm|proceed)\b",
++    r"update it|adjust it|sounds good|let'?s do it|that works|confirm|proceed)"
++    r"[\s.!?]*$",
+     re.IGNORECASE,
+ )
+ 
+ 
+ def _get_trip(db: Session, user: User, trip_plan_id: int) -> TripPlan:
+-    trip = (
+-        db.query(TripPlan)
+-        .options(joinedload(TripPlan.places))
+-        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == user.id)
+-        .first()
+-    )
+-    if trip is None:
+-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
++    trip = get_owned_trip(db, user, trip_plan_id)
+     if not trip.places:
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+@@ -195,12 +205,13 @@ def chat_with_trip(
+                     trip=trip_detail,
+                 )
+             except HTTPException as exc:
+-                reply = f"I couldn't apply those changes: {exc.detail}"
++                logger.warning("Chat apply-edit failed: %s", exc.detail)
++                reply = "I couldn't apply those changes. Please try again."
+                 _save_message(db, trip_plan_id=trip_plan_id, user_id=user.id, role="assistant", content=reply)
+                 return ChatMessageResponse(
+                     message=reply,
+                     source="mock",
+-                    fallback_reason=str(exc.detail),
++                    fallback_reason="Could not apply itinerary edit",
+                     proposes_edit=False,
+                     apply_instruction=None,
+                     itinerary_updated=False,
+@@ -232,20 +243,6 @@ def chat_with_trip(
+ 
+     _supersede_pending_edits(db, trip_plan_id, user.id)
+ 
+-    client = get_llm_client()
+-    if client is None:
+-        _save_message(db, trip_plan_id=trip_plan_id, user_id=user.id, role="assistant", content=MOCK_REPLY)
+-        return ChatMessageResponse(
+-            message=MOCK_REPLY,
+-            source="mock",
+-            fallback_reason="LLM client unavailable",
+-            proposes_edit=False,
+-            apply_instruction=None,
+-            itinerary_updated=False,
+-            trip=None,
+-        )
+-
+-    model = get_llm_model()
+     system = f"""You are RihlaTech AI, a helpful travel assistant for a trip to {destination}.
+ Answer concisely (2-4 sentences unless detail is needed). Be practical and friendly.
+ You cannot book flights or hotels.
+@@ -269,7 +266,7 @@ Set proposes_edit to true and apply_instruction to a clear, self-contained edit
+ apply_instruction must be detailed enough to execute without prior chat context — include day number, current activity name, and the replacement.
+ {pending_context}
+ Trip preferences:
+-{_trip_context(trip)}
++{trip_context(trip)}
+ 
+ Current itinerary:
+ {_itinerary_summary(trip)}
+@@ -277,59 +274,52 @@ Current itinerary:
+ 
+     messages = [{"role": "system", "content": system}, *_history_for_llm(history), {"role": "user", "content": text}]
+ 
+-    last_error: Exception | None = None
+-    for attempt in range(2):
+-        try:
+-            response = client.chat.completions.create(
+-                model=model,
+-                messages=messages,
++    try:
++        raw = str(
++            complete_chat(
++                messages,
+                 temperature=0.5,
+                 max_tokens=1024,
++                timeout=CHAT_TIMEOUT,
+             )
+-            raw = (response.choices[0].message.content or "").strip()
+-            if not raw:
+-                raise ValueError("Empty LLM response")
+-
+-            try:
+-                parsed = parse_llm_json_object(raw)
+-                reply = str(parsed.get("reply", "")).strip() or raw
+-                proposes_edit = bool(parsed.get("proposes_edit", False))
+-                apply_instruction = parsed.get("apply_instruction")
+-                if apply_instruction is not None:
+-                    apply_instruction = str(apply_instruction).strip() or None
+-                if proposes_edit and not apply_instruction:
+-                    proposes_edit = False
+-            except (json.JSONDecodeError, ValueError, TypeError):
+-                reply = raw
++        ).strip()
++        try:
++            parsed = parse_llm_json_object(raw)
++            reply = str(parsed.get("reply", "")).strip() or raw
++            proposes_edit = bool(parsed.get("proposes_edit", False))
++            apply_instruction = parsed.get("apply_instruction")
++            if apply_instruction is not None:
++                apply_instruction = str(apply_instruction).strip() or None
++            if proposes_edit and not apply_instruction:
+                 proposes_edit = False
+-                apply_instruction = None
+-
+-            assistant_row = _save_message(
+-                db,
+-                trip_plan_id=trip_plan_id,
+-                user_id=user.id,
+-                role="assistant",
+-                content=reply,
+-                proposes_edit=proposes_edit,
+-                apply_instruction=apply_instruction,
+-            )
+-            return ChatMessageResponse(
+-                message=reply,
+-                source=get_llm_provider(),
+-                fallback_reason=None,
+-                proposes_edit=proposes_edit,
+-                apply_instruction=apply_instruction,
+-                assistant_message_id=assistant_row.id,
+-                itinerary_updated=False,
+-                trip=None,
+-            )
+-        except Exception as exc:
+-            last_error = exc
+-            logger.warning("Chat attempt %s failed: %s", attempt + 1, exc)
+-            if attempt < 1:
+-                time.sleep(2)
++        except (json.JSONDecodeError, ValueError, TypeError):
++            reply = raw
++            proposes_edit = False
++            apply_instruction = None
++
++        assistant_row = _save_message(
++            db,
++            trip_plan_id=trip_plan_id,
++            user_id=user.id,
++            role="assistant",
++            content=reply,
++            proposes_edit=proposes_edit,
++            apply_instruction=apply_instruction,
++        )
++        return ChatMessageResponse(
++            message=reply,
++            source=get_llm_provider(),
++            fallback_reason=None,
++            proposes_edit=proposes_edit,
++            apply_instruction=apply_instruction,
++            assistant_message_id=assistant_row.id,
++            itinerary_updated=False,
++            trip=None,
++        )
++    except LLMError as exc:
++        logger.warning("Chat LLM failed: %s", exc)
++        fallback_reason = "LLM request failed"
+ 
+-    fallback_reason = f"{type(last_error).__name__}: {last_error}" if last_error else "Unknown error"
+     _save_message(db, trip_plan_id=trip_plan_id, user_id=user.id, role="assistant", content=MOCK_REPLY)
+     return ChatMessageResponse(
+         message=MOCK_REPLY,
+diff --git a/backend/app/services/community.py b/backend/app/services/community.py
+index ff9b97a..8dea974 100644
+--- a/backend/app/services/community.py
++++ b/backend/app/services/community.py
+@@ -18,7 +18,7 @@ from app.schemas.community import (
+     ToggleSaveResponse,
+     ToggleVoteResponse,
+ )
+-from app.services.itinerary import _build_response
++from app.services.itinerary import build_trip_response, get_owned_trip, trip_day_count
+ 
+ 
+ def _author_display(user: User) -> CommunityAuthor:
+@@ -27,16 +27,6 @@ def _author_display(user: User) -> CommunityAuthor:
+     return CommunityAuthor(id=user.id, display_name=display)
+ 
+ 
+-def _trip_day_count(trip: TripPlan) -> int:
+-    if trip.start_date and trip.end_date and trip.end_date >= trip.start_date:
+-        days = (trip.end_date - trip.start_date).days + 1
+-        return max(1, min(days, 14))
+-    places = trip.places or []
+-    if places:
+-        return max(p.day_number for p in places)
+-    return 1
+-
+-
+ def _counts_for_trip(db: Session, trip_plan_id: int) -> tuple[int, int, int]:
+     vote_count = db.query(func.count(TripVote.id)).filter(TripVote.trip_plan_id == trip_plan_id).scalar() or 0
+     save_count = db.query(func.count(TripSave.id)).filter(TripSave.trip_plan_id == trip_plan_id).scalar() or 0
+@@ -78,18 +68,6 @@ def _get_shared_trip(db: Session, trip_plan_id: int) -> TripPlan:
+     return trip
+ 
+ 
+-def _get_owned_trip(db: Session, user: User, trip_plan_id: int) -> TripPlan:
+-    trip = (
+-        db.query(TripPlan)
+-        .options(joinedload(TripPlan.places))
+-        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == user.id)
+-        .first()
+-    )
+-    if trip is None:
+-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
+-    return trip
+-
+-
+ def _to_feed_item(
+     db: Session,
+     trip: TripPlan,
+@@ -105,7 +83,7 @@ def _to_feed_item(
+         end_date=trip.end_date,
+         theme=trip.theme,
+         trip_purpose=trip.trip_purpose,
+-        num_days=_trip_day_count(trip),
++        num_days=trip_day_count(trip, fallback=1, from_places=True),
+         activity_count=len(trip.places or []),
+         share_caption=trip.share_caption,
+         shared_at=trip.shared_at or trip.updated_at,
+@@ -147,7 +125,7 @@ def list_saved(db: Session, user: User) -> CommunityFeedResponse:
+ 
+ 
+ def share_trip(db: Session, user: User, trip_plan_id: int, caption: str | None) -> ShareTripResponse:
+-    trip = _get_owned_trip(db, user, trip_plan_id)
++    trip = get_owned_trip(db, user, trip_plan_id)
+     if not trip.places:
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+@@ -167,7 +145,7 @@ def share_trip(db: Session, user: User, trip_plan_id: int, caption: str | None)
+ 
+ 
+ def unshare_trip(db: Session, user: User, trip_plan_id: int) -> ShareTripResponse:
+-    trip = _get_owned_trip(db, user, trip_plan_id)
++    trip = get_owned_trip(db, user, trip_plan_id)
+     trip.is_shared = False
+     trip.share_caption = None
+     trip.shared_at = None
+@@ -226,7 +204,7 @@ def get_shared_trip_detail(db: Session, user: User, trip_plan_id: int) -> Commun
+ 
+     places = list(trip.places)
+     source = trip.itinerary_source or "generated"
+-    detail = _build_response(trip, places, source=source, fallback_reason=None)
++    detail = build_trip_response(trip, places, source=source, fallback_reason=None)
+     vote_count, save_count, comment_count = _counts_for_trip(db, trip_plan_id)
+     viewer_voted, viewer_saved = _viewer_flags(db, trip_plan_id, user)
+ 
+diff --git a/backend/app/services/consult_chat.py b/backend/app/services/consult_chat.py
+index 2f8e496..478f641 100644
+--- a/backend/app/services/consult_chat.py
++++ b/backend/app/services/consult_chat.py
+@@ -1,9 +1,8 @@
+ import logging
+-import time
+ 
+ from app.models.user import User
+ from app.schemas.trip import ConsultChatRequest, ConsultChatResponse
+-from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
++from app.services.llm import CHAT_TIMEOUT, LLMError, complete_chat, get_llm_provider, llm_configured
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -24,15 +23,6 @@ def consult_chat(user: User, payload: ConsultChatRequest) -> ConsultChatResponse
+             fallback_reason="No LLM API key configured",
+         )
+ 
+-    client = get_llm_client()
+-    if client is None:
+-        return ConsultChatResponse(
+-            message=MOCK_REPLY,
+-            source="mock",
+-            fallback_reason="LLM client unavailable",
+-        )
+-
+-    model = get_llm_model()
+     name = user.first_name or "there"
+     system = f"""You are RihlaTech AI, a friendly travel planning assistant.
+ The user ({name}) is browsing the app and may not have a trip itinerary yet.
+@@ -48,32 +38,24 @@ Do not invent specific itinerary details for their trip — offer general advice
+     ]
+     messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": text}]
+ 
+-    last_error: Exception | None = None
+-    for attempt in range(2):
+-        try:
+-            response = client.chat.completions.create(
+-                model=model,
+-                messages=messages,
++    try:
++        reply = str(
++            complete_chat(
++                messages,
+                 temperature=0.6,
+                 max_tokens=768,
++                timeout=CHAT_TIMEOUT,
+             )
+-            reply = (response.choices[0].message.content or "").strip()
+-            if not reply:
+-                raise ValueError("Empty LLM response")
+-            return ConsultChatResponse(
+-                message=reply,
+-                source=get_llm_provider(),
+-                fallback_reason=None,
+-            )
+-        except Exception as exc:
+-            last_error = exc
+-            logger.warning("Consult chat attempt %s failed: %s", attempt + 1, exc)
+-            if attempt < 1:
+-                time.sleep(2)
+-
+-    fallback_reason = f"{type(last_error).__name__}: {last_error}" if last_error else "Unknown error"
+-    return ConsultChatResponse(
+-        message=MOCK_REPLY,
+-        source="mock",
+-        fallback_reason=fallback_reason,
+-    )
++        ).strip()
++        return ConsultChatResponse(
++            message=reply,
++            source=get_llm_provider(),
++            fallback_reason=None,
++        )
++    except LLMError as exc:
++        logger.warning("Consult chat LLM failed: %s", exc)
++        return ConsultChatResponse(
++            message=MOCK_REPLY,
++            source="mock",
++            fallback_reason="LLM request failed",
++        )
+diff --git a/backend/app/services/destinations.py b/backend/app/services/destinations.py
+index 819ad33..8d447b5 100644
+--- a/backend/app/services/destinations.py
++++ b/backend/app/services/destinations.py
+@@ -1,5 +1,4 @@
+ import logging
+-import time
+ 
+ from fastapi import HTTPException, status
+ from sqlalchemy.orm import Session
+@@ -7,8 +6,8 @@ from sqlalchemy.orm import Session
+ from app.models.trip_plan import TripPlan
+ from app.models.user import User
+ from app.schemas.trip import DestinationSuggestion, SuggestDestinationsResponse
+-from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
+-from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_array
++from app.services.llm import ITINERARY_TIMEOUT, complete_chat, get_llm_model, get_llm_provider, llm_configured
++from app.services.llm_json import LLM_MAX_TOKENS, parse_llm_json_array
+ from app.services.theme_preferences import decode_theme_preferences
+ 
+ logger = logging.getLogger(__name__)
+@@ -32,7 +31,7 @@ MOCK_SUGGESTIONS = [
+ ]
+ 
+ 
+-def _trip_context(trip: TripPlan) -> str:
++def trip_context(trip: TripPlan) -> str:
+     pace, interests = decode_theme_preferences(trip.theme)
+     interest_label = ", ".join(interests) if interests else "mixed"
+     parts = [
+@@ -77,47 +76,29 @@ def _mock_suggestions(trip: TripPlan) -> list[DestinationSuggestion]:
+ 
+ 
+ def _ai_suggestions(trip: TripPlan) -> list[DestinationSuggestion]:
+-    client = get_llm_client()
+-    if client is None:
+-        raise RuntimeError("No LLM client configured")
+-
+-    model = get_llm_model()
+     prompt = f"""Based on these travel preferences, suggest exactly 3 destination cities.
+ Return JSON only: an array of 3 objects with keys "city", "country", "blurb".
+ Each blurb must be ONE short sentence (max 100 characters).
+ Do not include markdown, code fences, or any text outside the JSON array.
+ 
+ Preferences:
+-{_trip_context(trip)}
++{trip_context(trip)}
+ """
+ 
+-    last_error: Exception | None = None
+-    for attempt in range(3):
+-        try:
+-            response = client.chat.completions.create(
+-                model=model,
+-                messages=[
+-                    {"role": "system", "content": "You are a travel advisor. Respond with valid JSON only."},
+-                    {"role": "user", "content": prompt},
+-                ],
+-                temperature=0.5,
+-                max_tokens=LLM_MAX_TOKENS,
+-            )
+-            content = response.choices[0].message.content or ""
+-            raw = parse_llm_json_array(content, min_items=3)
+-            return [DestinationSuggestion.model_validate(item) for item in raw[:3]]
+-        except Exception as exc:
+-            last_error = exc
+-            if is_retryable_llm_error(exc) and attempt < 2:
+-                wait = 2 * (attempt + 1)
+-                logger.info("LLM attempt %s failed, retrying in %ss: %s", attempt + 1, wait, exc)
+-                time.sleep(wait)
+-                continue
+-            raise
+-
+-    if last_error:
+-        raise last_error
+-    raise RuntimeError("LLM request failed")
++    def parse_suggestions(content: str) -> list[DestinationSuggestion]:
++        raw = parse_llm_json_array(content, min_items=3)
++        return [DestinationSuggestion.model_validate(item) for item in raw[:3]]
++
++    return complete_chat(
++        [
++            {"role": "system", "content": "You are a travel advisor. Respond with valid JSON only."},
++            {"role": "user", "content": prompt},
++        ],
++        temperature=0.5,
++        max_tokens=LLM_MAX_TOKENS,
++        timeout=ITINERARY_TIMEOUT,
++        parse=parse_suggestions,
++    )
+ 
+ 
+ def suggest_destinations(
+@@ -146,13 +127,13 @@ def suggest_destinations(
+             suggestions = _ai_suggestions(trip)
+             source = get_llm_provider()
+         except Exception as exc:
+-            fallback_reason = f"{type(exc).__name__}: {exc}"
+             logger.warning(
+                 "LLM destination suggestions failed (provider=%s model=%s), using mock: %s",
+                 get_llm_provider(),
+                 get_llm_model(),
+-                fallback_reason,
++                exc,
+             )
++            fallback_reason = "LLM request failed"
+             suggestions = _mock_suggestions(trip)
+     else:
+         fallback_reason = "No LLM API key configured for provider " + get_llm_provider()
+diff --git a/backend/app/services/email.py b/backend/app/services/email.py
+new file mode 100644
+index 0000000..3089d62
+--- /dev/null
++++ b/backend/app/services/email.py
+@@ -0,0 +1,44 @@
++"""Transactional email sending (Resend). See docs/project-summary.md / plan.md
++for the current sandbox limitation: without a verified domain, Resend's
++onboarding@resend.dev sender can only deliver to the email on the Resend
++account itself — everything else gets a 403. We never let that fail the
++request; the code is logged instead so local dev/testing can continue."""
++
++import logging
++
++import resend
++
++from app.config import settings
++
++logger = logging.getLogger(__name__)
++
++
++def email_configured() -> bool:
++    return bool(settings.resend_api_key)
++
++
++def send_verification_email(to_email: str, code: str) -> None:
++    if not email_configured():
++        logger.warning(
++            "RESEND_API_KEY not set — verification code for %s: %s", to_email, code
++        )
++        return
++
++    resend.api_key = settings.resend_api_key
++    try:
++        resend.Emails.send(
++            {
++                "from": settings.resend_from_email,
++                "to": [to_email],
++                "subject": "Your RihlaTech verification code",
++                "html": (
++                    "<div style=\"font-family: sans-serif;\">"
++                    "<p>Your RihlaTech verification code is:</p>"
++                    f"<p style=\"font-size: 28px; font-weight: 700; letter-spacing: 6px;\">{code}</p>"
++                    "<p>This code expires in 10 minutes. If you didn't request this, you can ignore this email.</p>"
++                    "</div>"
++                ),
++            }
++        )
++    except Exception as exc:
++        logger.warning("Failed to send verification email to %s: %s", to_email, exc)
+diff --git a/backend/app/services/email_verification.py b/backend/app/services/email_verification.py
+new file mode 100644
+index 0000000..b63a1b3
+--- /dev/null
++++ b/backend/app/services/email_verification.py
+@@ -0,0 +1,75 @@
++import hashlib
++import hmac
++import secrets
++from datetime import datetime, timedelta, timezone
++
++from sqlalchemy.orm import Session
++
++from app.config import settings
++from app.models.user import User
++
++CODE_LENGTH = 6
++CODE_TTL = timedelta(minutes=10)
++RESEND_COOLDOWN = timedelta(seconds=60)
++MAX_ATTEMPTS = 5
++
++
++def _hash_code(code: str) -> str:
++    return hashlib.sha256(f"{code}:{settings.jwt_secret}".encode()).hexdigest()
++
++
++def _generate_code() -> str:
++    return f"{secrets.randbelow(10 ** CODE_LENGTH):0{CODE_LENGTH}d}"
++
++
++def resend_cooldown_seconds_remaining(user: User) -> int:
++    if not user.verification_last_sent_at:
++        return 0
++    elapsed = datetime.now(timezone.utc) - user.verification_last_sent_at
++    remaining = RESEND_COOLDOWN - elapsed
++    return max(0, int(remaining.total_seconds()))
++
++
++def issue_verification_code(db: Session, user: User) -> str:
++    """Generate a fresh code, store its hash, and reset attempt/expiry state."""
++    code = _generate_code()
++    user.verification_code_hash = _hash_code(code)
++    user.verification_code_expires_at = datetime.now(timezone.utc) + CODE_TTL
++    user.verification_attempts = 0
++    user.verification_last_sent_at = datetime.now(timezone.utc)
++    db.commit()
++    return code
++
++
++def consume_verification_code(db: Session, user: User, code: str) -> str | None:
++    """Validate a submitted code. Returns None on success (and marks the user
++    verified), or a user-facing error message on failure."""
++    if not user.verification_code_hash or not user.verification_code_expires_at:
++        return "No pending verification code. Please request a new one."
++
++    if datetime.now(timezone.utc) > user.verification_code_expires_at:
++        return "This code has expired. Please request a new one."
++
++    if user.verification_attempts >= MAX_ATTEMPTS:
++        user.verification_code_hash = None
++        user.verification_code_expires_at = None
++        db.commit()
++        return "Too many incorrect attempts. Please request a new code."
++
++    if not hmac.compare_digest(_hash_code(code.strip()), user.verification_code_hash):
++        user.verification_attempts += 1
++        remaining = MAX_ATTEMPTS - user.verification_attempts
++        if remaining <= 0:
++            user.verification_code_hash = None
++            user.verification_code_expires_at = None
++            db.commit()
++            return "Too many incorrect attempts. Please request a new code."
++        db.commit()
++        return f"Incorrect code. {remaining} attempt{'s' if remaining != 1 else ''} left."
++
++    user.is_verified = True
++    user.verification_code_hash = None
++    user.verification_code_expires_at = None
++    user.verification_attempts = 0
++    db.commit()
++    return None
+diff --git a/backend/app/services/flights.py b/backend/app/services/flights.py
+index 7a905ea..9cc2cad 100644
+--- a/backend/app/services/flights.py
++++ b/backend/app/services/flights.py
+@@ -17,7 +17,7 @@ from app.config import settings
+ from app.models.trip_plan import TripPlan
+ from app.models.user import User
+ from app.schemas.trip import FlightOfferPublic, FlightSegmentPublic, FlightsResponse
+-from app.services.itinerary import _get_trip_for_user
++from app.services.itinerary import get_owned_trip
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -415,7 +415,7 @@ def _search_duffel(
+ 
+ 
+ def search_flights(db: Session, user: User, trip_plan_id: int) -> FlightsResponse:
+-    trip = _get_trip_for_user(db, user, trip_plan_id)
++    trip = get_owned_trip(db, user, trip_plan_id)
+     if not trip.include_flights:
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Flights not requested for this trip")
+ 
+diff --git a/backend/app/services/geocoding.py b/backend/app/services/geocoding.py
+index 44e5690..0cfb43b 100644
+--- a/backend/app/services/geocoding.py
++++ b/backend/app/services/geocoding.py
+@@ -1,27 +1,19 @@
+ import json
+ import logging
+-import math
+ import re
+-import time
++from collections.abc import Callable
+ from urllib.error import HTTPError, URLError
+ from urllib.parse import quote
+ from urllib.request import urlopen
+ 
+-from sqlalchemy.orm import Session
+-
+ from app.config import settings
+ from app.services.place_labels import city_comparable_key
+-from app.models.place import Place
+-from app.models.trip_plan import TripPlan
+ 
+ logger = logging.getLogger(__name__)
+ 
+ MAPBOX_GEOCODE_URL = "https://api.mapbox.com/geocoding/v5/mapbox.places"
+ MAPBOX_SEARCHBOX_URL = "https://api.mapbox.com/search/searchbox/v1/forward"
+ 
+-# Reject pins essentially identical to the destination city center (bad Mapbox matches).
+-MIN_DEST_CENTER_SEPARATION_KM = 0.8
+-
+ COUNTRY_NAME_TO_CODE: dict[str, str] = {
+     "greece": "gr",
+     "italy": "it",
+@@ -84,60 +76,11 @@ COUNTRY_NAME_TO_CODE: dict[str, str] = {
+     "england": "gb",
+ }
+ 
+-# Activities must land within this radius of the destination city center.
+-ACTIVITY_MAX_DISTANCE_KM = 40.0
+-MAX_DISTANCE_KM_FROM_DESTINATION = 120.0
+-# Minimum composite score (0–1) to accept a Mapbox match.
+-MIN_MATCH_SCORE = 0.38
+-
+-STOP_WORDS = frozenset(
+-    {
+-        "a",
+-        "an",
+-        "and",
+-        "at",
+-        "by",
+-        "for",
+-        "in",
+-        "of",
+-        "on",
+-        "or",
+-        "the",
+-        "to",
+-        "with",
+-        "visit",
+-        "explore",
+-        "tour",
+-        "enjoy",
+-        "discover",
+-        "experience",
+-        "stroll",
+-        "walk",
+-        "see",
+-    }
+-)
+-
+-# POI type tiers — try precise venues before broader place names.
+-GEOCODE_TYPE_TIERS = (
+-    "poi",
+-    "poi,address",
+-    "poi,address,place,locality",
+-)
+-
+ 
+ def mapbox_configured() -> bool:
+     return bool(settings.mapbox_access_token)
+ 
+ 
+-def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+-    radius = 6371.0
+-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+-    d_phi = math.radians(lat2 - lat1)
+-    d_lambda = math.radians(lng2 - lng1)
+-    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+-    return 2 * radius * math.asin(math.sqrt(a))
+-
+-
+ def _destination_context(destination: str) -> dict:
+     parts = [part.strip() for part in destination.split(",") if part.strip()]
+     city = parts[0] if parts else destination.strip()
+@@ -208,21 +151,6 @@ def _feature_country(feature: dict) -> str | None:
+     return None
+ 
+ 
+-def _normalize_tokens(text: str) -> set[str]:
+-    tokens = {t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 1}
+-    return tokens - STOP_WORDS
+-
+-
+-def _token_overlap(search: str, candidate: str) -> float:
+-    search_tokens = _normalize_tokens(search)
+-    if not search_tokens:
+-        return 0.0
+-    candidate_tokens = _normalize_tokens(candidate)
+-    if not candidate_tokens:
+-        return 0.0
+-    return len(search_tokens & candidate_tokens) / len(search_tokens)
+-
+-
+ def _resolve_destination_center(
+     destination: str,
+     dest_context: dict,
+@@ -268,551 +196,6 @@ def geocode_destination(
+     return None
+ 
+ 
+-def _is_mostly_non_latin(text: str) -> bool:
+-    letters = [char for char in text if char.isalpha()]
+-    if not letters:
+-        return False
+-    non_ascii = sum(1 for char in letters if ord(char) > 127)
+-    return (non_ascii / len(letters)) > 0.5
+-
+-
+-def _feature_locality_names(feature: dict) -> set[str]:
+-    names: set[str] = set()
+-    for item in feature.get("context", []):
+-        if not isinstance(item, dict):
+-            continue
+-        item_id = item.get("id", "")
+-        if item_id.startswith("place.") or item_id.startswith("locality.") or item_id.startswith("neighborhood."):
+-            text = str(item.get("text", "")).strip().lower()
+-            if text:
+-                names.add(text)
+-    return names
+-
+-
+-def _coords_from_activity_payload(
+-    activity: dict,
+-    dest_center: tuple[float, float] | None,
+-) -> tuple[float, float] | None:
+-    lat_raw = activity.get("latitude")
+-    lng_raw = activity.get("longitude")
+-    if lat_raw is None or lng_raw is None:
+-        return None
+-    try:
+-        lat, lng = float(lat_raw), float(lng_raw)
+-    except (TypeError, ValueError):
+-        return None
+-    if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
+-        return None
+-    if dest_center is not None:
+-        dist = _haversine_km(dest_center[1], dest_center[0], lat, lng)
+-        if dist > ACTIVITY_MAX_DISTANCE_KM:
+-            return None
+-    return lat, lng
+-
+-
+-def _score_feature(
+-    feature: dict,
+-    *,
+-    search_name: str,
+-    dest_center: tuple[float, float],
+-    max_distance_km: float,
+-    country_code: str | None,
+-    dest_city: str | None = None,
+-) -> float | None:
+-    center = feature.get("center")
+-    if not isinstance(center, list) or len(center) < 2:
+-        return None
+-
+-    if country_code:
+-        feature_country = _feature_country(feature)
+-        if feature_country and feature_country != country_code.lower():
+-            return None
+-
+-    lng, lat = float(center[0]), float(center[1])
+-    dist_km = _haversine_km(dest_center[1], dest_center[0], lat, lng)
+-    if dist_km > max_distance_km:
+-        return None
+-    if _too_close_to_dest_center(lat, lng, dest_center):
+-        return None
+-
+-    relevance = float(feature.get("relevance", 0))
+-    label = feature.get("place_name") or feature.get("text") or ""
+-    overlap = _token_overlap(search_name, label)
+-
+-    if relevance < 0.35 and overlap < 0.25:
+-        return None
+-
+-    place_types = feature.get("place_type") or []
+-    if place_types in (["locality"], ["place"]) or place_types == ["address"]:
+-        return None
+-    poi_bonus = 0.12 if "poi" in place_types else 0.0
+-
+-    dist_penalty = (dist_km / max_distance_km) * 0.15
+-    dest_city_lower = (dest_city or "").lower()
+-
+-    localities = _feature_locality_names(feature)
+-    if dest_city_lower and dest_city_lower in label.lower():
+-        locality_bonus = 0.12
+-    elif dest_city_lower and dest_city_lower in localities:
+-        locality_bonus = 0.1
+-    else:
+-        locality_bonus = 0.0
+-
+-    if _is_mostly_non_latin(label):
+-        # Mapbox often returns Arabic labels; trust relevance + distance near destination.
+-        score = (relevance * 0.65) + poi_bonus + locality_bonus - dist_penalty
+-        if relevance >= 0.85 and dist_km < 15.0:
+-            score += 0.06
+-        return score
+-
+-    score = (relevance * 0.4) + (overlap * 0.45) + poi_bonus + locality_bonus - dist_penalty
+-    return score
+-
+-
+-def _fetch_features(
+-    query: str,
+-    *,
+-    dest_center: tuple[float, float],
+-    country_code: str | None,
+-    types: str,
+-) -> list[dict]:
+-    encoded = quote(query.strip(), safe="")
+-    if not encoded:
+-        return []
+-
+-    lng, lat = dest_center
+-    params = [
+-        f"proximity={lng},{lat}",
+-        f"types={quote(types, safe=',')}",
+-    ]
+-    if country_code:
+-        params.append(f"country={country_code.lower()}")
+-
+-    payload = _mapbox_geocode(encoded, "&".join(params), limit=8)
+-    if not payload:
+-        return []
+-    return payload.get("features", [])
+-
+-
+-def _best_coords_from_features(
+-    features: list[dict],
+-    *,
+-    search_name: str,
+-    dest_center: tuple[float, float],
+-    max_distance_km: float,
+-    country_code: str | None,
+-    dest_city: str | None = None,
+-) -> tuple[float, float] | None:
+-    best_score = 0.0
+-    best_coords: tuple[float, float] | None = None
+-
+-    for feature in features:
+-        score = _score_feature(
+-            feature,
+-            search_name=search_name,
+-            dest_center=dest_center,
+-            max_distance_km=max_distance_km,
+-            country_code=country_code,
+-            dest_city=dest_city,
+-        )
+-        if score is None or score < MIN_MATCH_SCORE:
+-            continue
+-        if score > best_score:
+-            center = feature["center"]
+-            lng, lat = float(center[0]), float(center[1])
+-            best_score = score
+-            best_coords = (lat, lng)
+-
+-    return best_coords
+-
+-
+-def _search_queries(
+-    search_name: str,
+-    location_hint: str | None,
+-    dest_context: dict,
+-    destination: str,
+-) -> list[str]:
+-    city = dest_context.get("city") or ""
+-    country_label = dest_context.get("country_name", "").title()
+-    full = dest_context.get("full") or destination
+-    name = search_name.strip()
+-    hint = (location_hint or "").strip()
+-
+-    queries: list[str] = []
+-    if hint:
+-        queries.append(f"{name}, {hint}, {city}".strip(", "))
+-    queries.append(f"{name}, {city}, {country_label}".strip(", "))
+-    queries.append(f"{name}, {full}")
+-    queries.append(f"{name}, {city}")
+-
+-    seen: set[str] = set()
+-    unique: list[str] = []
+-    for query in queries:
+-        key = query.lower()
+-        if key not in seen and query.strip():
+-            seen.add(key)
+-            unique.append(query)
+-    return unique
+-
+-
+-def geocode_activity(
+-    search_name: str,
+-    *,
+-    location_hint: str | None,
+-    destination: str,
+-    dest_context: dict,
+-    dest_center: tuple[float, float],
+-) -> tuple[float, float] | None:
+-    """
+-    Resolve a single itinerary activity to coordinates.
+-
+-    Uses scored POI matching — no artificial pin spreading; the map UI handles overlap.
+-    """
+-    country_code = dest_context.get("country_code")
+-    dest_city = dest_context.get("city")
+-    queries = _search_queries(search_name, location_hint, dest_context, destination)
+-
+-    for types in GEOCODE_TYPE_TIERS:
+-        for query in queries:
+-            features = _fetch_features(
+-                query,
+-                dest_center=dest_center,
+-                country_code=country_code,
+-                types=types,
+-            )
+-            coords = _best_coords_from_features(
+-                features,
+-                search_name=search_name,
+-                dest_center=dest_center,
+-                max_distance_km=ACTIVITY_MAX_DISTANCE_KM,
+-                country_code=country_code,
+-                dest_city=dest_city,
+-            )
+-            if coords:
+-                return coords
+-
+-    logger.info(
+-        "No confident Mapbox match for %r (hint=%r) near %s",
+-        search_name,
+-        location_hint,
+-        destination,
+-    )
+-    return None
+-
+-
+-def _searchbox_forward(
+-    query: str,
+-    *,
+-    proximity: tuple[float, float],
+-    country_code: str | None = None,
+-    limit: int = 5,
+-) -> list[dict]:
+-    """Mapbox Search Box API — better POI coverage than Geocoding v5."""
+-    if not mapbox_configured() or not query.strip():
+-        return []
+-
+-    token = settings.mapbox_access_token
+-    lng, lat = proximity
+-    encoded = quote(query.strip(), safe="")
+-    url = (
+-        f"{MAPBOX_SEARCHBOX_URL}?q={encoded}"
+-        f"&proximity={lng},{lat}&limit={limit}&access_token={token}"
+-    )
+-    if country_code:
+-        url += f"&country={country_code.lower()}"
+-
+-    try:
+-        with urlopen(url, timeout=12) as response:
+-            payload = json.loads(response.read().decode())
+-    except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
+-        logger.warning("Mapbox Search Box request failed: %s", exc)
+-        return []
+-
+-    results: list[dict] = []
+-    for feature in payload.get("features", []):
+-        geometry = feature.get("geometry", {})
+-        coords = geometry.get("coordinates")
+-        if not isinstance(coords, list) or len(coords) < 2:
+-            continue
+-        props = feature.get("properties", {}) or {}
+-        name = props.get("name") or props.get("place_formatted") or props.get("full_address") or ""
+-        feature_type = str(props.get("feature_type") or "").lower()
+-        lng_f, lat_f = float(coords[0]), float(coords[1])
+-        results.append(
+-            {
+-                "latitude": lat_f,
+-                "longitude": lng_f,
+-                "name": str(name),
+-                "feature_type": feature_type,
+-                "mapbox_id": props.get("mapbox_id"),
+-            }
+-        )
+-    return results
+-
+-
+-def search_activity_places(
+-    query: str,
+-    *,
+-    proximity: tuple[float, float] | None = None,
+-    country_code: str | None = None,
+-    limit: int = 8,
+-) -> list[dict]:
+-    """POI search for the location picker (Mapbox Search Box)."""
+-    if not mapbox_configured() or not query.strip() or proximity is None:
+-        return []
+-
+-    raw = _searchbox_forward(
+-        query,
+-        proximity=proximity,
+-        country_code=country_code,
+-        limit=limit,
+-    )
+-    if not raw and country_code:
+-        raw = _searchbox_forward(
+-            query,
+-            proximity=proximity,
+-            country_code=None,
+-            limit=limit,
+-        )
+-
+-    results: list[dict] = []
+-    seen: set[str] = set()
+-    for item in raw:
+-        feature_type = str(item.get("feature_type") or "").lower()
+-        if _reject_city_level_feature(feature_type):
+-            continue
+-        label = str(item.get("name") or "").strip()
+-        if not label:
+-            continue
+-        key = f"{item['latitude']:.5f},{item['longitude']:.5f}"
+-        if key in seen:
+-            continue
+-        seen.add(key)
+-        results.append(
+-            {
+-                "label": label,
+-                "latitude": float(item["latitude"]),
+-                "longitude": float(item["longitude"]),
+-                "mapbox_id": item.get("mapbox_id"),
+-            }
+-        )
+-    return results
+-
+-
+-def _reject_city_level_feature(feature_type: str) -> bool:
+-    return feature_type in {"country", "region", "district", "place", "locality", "neighborhood", "street"}
+-
+-
+-def _too_close_to_dest_center(
+-    lat: float,
+-    lng: float,
+-    dest_center: tuple[float, float],
+-) -> bool:
+-    return _haversine_km(dest_center[1], dest_center[0], lat, lng) < MIN_DEST_CENTER_SEPARATION_KM
+-
+-
+-def _fix_possible_lat_lng_swap(
+-    lat: float,
+-    lng: float,
+-    dest_center: tuple[float, float] | None,
+-) -> tuple[float, float]:
+-    if dest_center is None:
+-        return lat, lng
+-    dest_lat, dest_lng = dest_center[1], dest_center[0]
+-    normal = _haversine_km(dest_lat, dest_lng, lat, lng)
+-    swapped = _haversine_km(dest_lat, dest_lng, lng, lat)
+-    if swapped + 1.0 < normal:
+-        return lng, lat
+-    return lat, lng
+-
+-
+-def _score_searchbox_result(
+-    result: dict,
+-    *,
+-    search_name: str,
+-    dest_center: tuple[float, float],
+-    max_distance_km: float,
+-    dest_city: str | None = None,
+-) -> float | None:
+-    feature_type = result.get("feature_type", "")
+-    if _reject_city_level_feature(feature_type):
+-        return None
+-
+-    lat = float(result["latitude"])
+-    lng = float(result["longitude"])
+-    dist_km = _haversine_km(dest_center[1], dest_center[0], lat, lng)
+-    if dist_km > max_distance_km:
+-        return None
+-    if _too_close_to_dest_center(lat, lng, dest_center):
+-        return None
+-
+-    label = str(result.get("name") or "")
+-    overlap = _token_overlap(search_name, label)
+-    if overlap < 0.2:
+-        return None
+-
+-    poi_bonus = 0.15 if feature_type == "poi" else 0.0
+-    dist_penalty = (dist_km / max_distance_km) * 0.12
+-    dest_city_lower = (dest_city or "").lower()
+-    city_bonus = 0.08 if dest_city_lower and dest_city_lower in label.lower() else 0.0
+-    return (overlap * 0.65) + poi_bonus + city_bonus - dist_penalty
+-
+-
+-def _pick_searchbox_result(
+-    results: list[dict],
+-    *,
+-    search_name: str,
+-    dest_center: tuple[float, float],
+-    max_distance_km: float,
+-    dest_city: str | None = None,
+-) -> tuple[float, float] | None:
+-    best_score = 0.0
+-    best_coords: tuple[float, float] | None = None
+-
+-    for result in results:
+-        score = _score_searchbox_result(
+-            result,
+-            search_name=search_name,
+-            dest_center=dest_center,
+-            max_distance_km=max_distance_km,
+-            dest_city=dest_city,
+-        )
+-        if score is None or score < MIN_MATCH_SCORE:
+-            continue
+-        if score > best_score:
+-            best_score = score
+-            best_coords = (float(result["latitude"]), float(result["longitude"]))
+-
+-    return best_coords
+-
+-
+-def _searchbox_geocode_activity(
+-    search_name: str,
+-    *,
+-    location_hint: str | None,
+-    destination: str,
+-    dest_context: dict,
+-    dest_center: tuple[float, float],
+-) -> tuple[float, float] | None:
+-    country_code = dest_context.get("country_code")
+-    dest_city = dest_context.get("city")
+-
+-    for query in _search_queries(search_name, location_hint, dest_context, destination):
+-        results = _searchbox_forward(
+-            query,
+-            proximity=dest_center,
+-            country_code=country_code,
+-        )
+-        coords = _pick_searchbox_result(
+-            results,
+-            search_name=search_name,
+-            dest_center=dest_center,
+-            max_distance_km=ACTIVITY_MAX_DISTANCE_KM,
+-            dest_city=dest_city,
+-        )
+-        if coords:
+-            return coords
+-
+-    short_query = f"{search_name}, {dest_city or ''}".strip(", ")
+-    results = _searchbox_forward(short_query, proximity=dest_center, country_code=None)
+-    return _pick_searchbox_result(
+-        results,
+-        search_name=search_name,
+-        dest_center=dest_center,
+-        max_distance_km=ACTIVITY_MAX_DISTANCE_KM,
+-        dest_city=dest_city,
+-    )
+-
+-
+-def resolve_place_coordinates(
+-    search_name: str,
+-    *,
+-    location_hint: str | None,
+-    destination: str,
+-    dest_context: dict,
+-    dest_center: tuple[float, float],
+-    llm_coords: tuple[float, float] | None = None,
+-) -> tuple[float, float] | None:
+-    """Search Box POI first, legacy geocoding second, validated LLM hint last."""
+-    coords = _searchbox_geocode_activity(
+-        search_name,
+-        location_hint=location_hint,
+-        destination=destination,
+-        dest_context=dest_context,
+-        dest_center=dest_center,
+-    )
+-    if coords:
+-        return coords
+-
+-    coords = geocode_activity(
+-        search_name,
+-        location_hint=location_hint,
+-        destination=destination,
+-        dest_context=dest_context,
+-        dest_center=dest_center,
+-    )
+-    if coords and not _too_close_to_dest_center(coords[0], coords[1], dest_center):
+-        return coords
+-
+-    if llm_coords:
+-        lat, lng = _fix_possible_lat_lng_swap(llm_coords[0], llm_coords[1], dest_center)
+-        if _coords_valid_for_trip(lat, lng, dest_center):
+-            country_code = dest_context.get("country_code")
+-            if country_code:
+-                reverse = _reverse_country_code(lng, lat)
+-                if reverse and reverse != country_code.lower():
+-                    return None
+-            if not _too_close_to_dest_center(lat, lng, dest_center):
+-                logger.info("Using validated LLM coordinates for %r", search_name)
+-                return lat, lng
+-
+-    return None
+-
+-
+-def geocode_query(
+-    query: str,
+-    *,
+-    proximity: tuple[float, float] | None = None,
+-    country_code: str | None = None,
+-    types: str | None = None,
+-    max_distance_km: float | None = None,
+-) -> tuple[float, float] | None:
+-    """Return (latitude, longitude) for a generic place search query."""
+-    if proximity is None:
+-        encoded = quote(query.strip(), safe="")
+-        if not encoded:
+-            return None
+-        params: list[str] = []
+-        if country_code:
+-            params.append(f"country={country_code.lower()}")
+-        if types:
+-            params.append(f"types={quote(types, safe=',')}")
+-        payload = _mapbox_geocode(encoded, "&".join(params), limit=5)
+-        if not payload:
+-            return None
+-        for feature in payload.get("features", []):
+-            center = feature.get("center")
+-            if isinstance(center, list) and len(center) >= 2:
+-                lng, lat = float(center[0]), float(center[1])
+-                return lat, lng
+-        return None
+-
+-    dest_center = proximity
+-    features = _fetch_features(
+-        query,
+-        dest_center=dest_center,
+-        country_code=country_code,
+-        types=types or "poi,address,place",
+-    )
+-    return _best_coords_from_features(
+-        features,
+-        search_name=query.split(",")[0],
+-        dest_center=dest_center,
+-        max_distance_km=max_distance_km or ACTIVITY_MAX_DISTANCE_KM,
+-        country_code=country_code,
+-    )
+-
+-
+ def _normalize_city_label(feature: dict) -> str:
+     """Build a consistent 'City, Country' label from Mapbox feature properties."""
+     city = str(feature.get("text") or "").strip()
+@@ -887,7 +270,13 @@ def search_airports(query: str, *, limit: int = 8) -> list[dict]:
+     seen_keys = {_airport_dedupe_key(item) for item in results}
+ 
+     if len(results) < limit:
+-        for item in _searchbox_airport_results(cleaned, limit=limit):
++        for item in _searchbox_forward(
++            cleaned,
++            poi_category="airport",
++            normalize=_normalize_searchbox_airport,
++            limit=limit,
++            log_label="airport",
++        ):
+             key = _airport_dedupe_key(item)
+             if key in seen_keys:
+                 continue
+@@ -902,8 +291,16 @@ def search_airports(query: str, *, limit: int = 8) -> list[dict]:
+     return results[:limit]
+ 
+ 
+-def _searchbox_airport_results(query: str, *, limit: int = 8) -> list[dict]:
+-    """Mapbox Search Box airport POI fallback when Duffel is unavailable."""
++def _searchbox_forward(
++    query: str,
++    *,
++    poi_category: str,
++    normalize: Callable[[dict], dict | None],
++    limit: int = 8,
++    proximity: tuple[float, float] | None = None,
++    country_code: str | None = None,
++    log_label: str = "search",
++) -> list[dict]:
+     if not mapbox_configured() or not query.strip():
+         return []
+ 
+@@ -911,19 +308,24 @@ def _searchbox_airport_results(query: str, *, limit: int = 8) -> list[dict]:
+     encoded = quote(query.strip(), safe="")
+     url = (
+         f"{MAPBOX_SEARCHBOX_URL}?q={encoded}"
+-        f"&limit={limit}&types=poi&poi_category=airport&access_token={token}"
++        f"&limit={limit}&types=poi&poi_category={poi_category}&access_token={token}"
+     )
++    if proximity:
++        lng, lat = proximity
++        url += f"&proximity={lng},{lat}"
++    if country_code:
++        url += f"&country={country_code.lower()}"
+ 
+     try:
+         with urlopen(url, timeout=12) as response:
+             payload = json.loads(response.read().decode())
+     except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
+-        logger.warning("Mapbox airport search failed: %s", exc)
++        logger.warning("Mapbox %s search failed: %s", log_label, exc)
+         return []
+ 
+     results: list[dict] = []
+     for feature in payload.get("features", []):
+-        item = _normalize_searchbox_airport(feature)
++        item = normalize(feature)
+         if item:
+             results.append(item)
+     return results
+@@ -995,42 +397,6 @@ def _normalize_searchbox_lodging(feature: dict) -> dict | None:
+     }
+ 
+ 
+-def _searchbox_lodging_results(
+-    query: str,
+-    *,
+-    proximity: tuple[float, float],
+-    country_code: str | None = None,
+-    limit: int = 8,
+-) -> list[dict]:
+-    """Mapbox Search Box lodging POIs near a destination center."""
+-    if not mapbox_configured() or not query.strip():
+-        return []
+-
+-    lng, lat = proximity
+-    token = settings.mapbox_access_token
+-    encoded = quote(query.strip(), safe="")
+-    url = (
+-        f"{MAPBOX_SEARCHBOX_URL}?q={encoded}"
+-        f"&proximity={lng},{lat}&limit={limit}&types=poi&poi_category=hotel&access_token={token}"
+-    )
+-    if country_code:
+-        url += f"&country={country_code.lower()}"
+-
+-    try:
+-        with urlopen(url, timeout=12) as response:
+-            payload = json.loads(response.read().decode())
+-    except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
+-        logger.warning("Mapbox lodging search failed: %s", exc)
+-        return []
+-
+-    results: list[dict] = []
+-    for feature in payload.get("features", []):
+-        item = _normalize_searchbox_lodging(feature)
+-        if item:
+-            results.append(item)
+-    return results
+-
+-
+ def search_lodging_hotels(destination: str, *, limit: int = 6) -> list[dict]:
+     """Return lodging POIs for a trip destination. Empty list on failure."""
+     cleaned = destination.strip()
+@@ -1051,11 +417,14 @@ def search_lodging_hotels(destination: str, *, limit: int = 6) -> list[dict]:
+     for query in queries:
+         if len(results) >= limit:
+             break
+-        batch = _searchbox_lodging_results(
++        batch = _searchbox_forward(
+             query,
++            poi_category="hotel",
++            normalize=_normalize_searchbox_lodging,
+             proximity=dest_center,
+             country_code=country_code,
+             limit=limit,
++            log_label="lodging",
+         )
+         for item in batch:
+             key = item["name"].strip().lower()
+@@ -1068,99 +437,3 @@ def search_lodging_hotels(destination: str, *, limit: int = 6) -> list[dict]:
+             if len(results) >= limit:
+                 break
+     return results[:limit]
+-
+-
+-def _coords_valid_for_trip(
+-    lat: float,
+-    lng: float,
+-    dest_center: tuple[float, float] | None,
+-) -> bool:
+-    if dest_center is None:
+-        return True
+-    dist = _haversine_km(dest_center[1], dest_center[0], lat, lng)
+-    return dist <= ACTIVITY_MAX_DISTANCE_KM
+-
+-
+-def place_needs_geocode(
+-    place: Place,
+-    dest_center: tuple[float, float] | None,
+-) -> bool:
+-    if getattr(place, "location_confirmed", False) and place.latitude is not None and place.longitude is not None:
+-        return False
+-    if place.latitude is None or place.longitude is None:
+-        return True
+-    if dest_center is not None and not _coords_valid_for_trip(
+-        place.latitude,
+-        place.longitude,
+-        dest_center,
+-    ):
+-        return True
+-    return False
+-
+-
+-def trip_needs_geocoding(trip: TripPlan, places: list[Place]) -> bool:
+-    if not places:
+-        return False
+-    if any(p.latitude is None or p.longitude is None for p in places):
+-        return True
+-
+-    destination = trip.destination or ""
+-    dest_center, _ = _resolve_destination_center(destination, _destination_context(destination))
+-    if dest_center is None:
+-        return False
+-    return any(place_needs_geocode(p, dest_center) for p in places)
+-
+-
+-def enrich_trip_places(
+-    db: Session,
+-    trip: TripPlan,
+-    places: list[Place] | None = None,
+-    *,
+-    force: bool = False,
+-) -> int:
+-    """Resolve latitude/longitude via Mapbox Search Box (POI-first)."""
+-    if not mapbox_configured():
+-        return 0
+-
+-    target_places = places if places is not None else list(trip.places)
+-    if not target_places:
+-        return 0
+-
+-    destination = trip.destination or ""
+-    dest_context = _destination_context(destination)
+-    dest_center, dest_context = _resolve_destination_center(destination, dest_context)
+-    if dest_center is None:
+-        logger.warning("Could not resolve destination center for %r — skipping geocoding", destination)
+-        return 0
+-
+-    updated = 0
+-    for place in target_places:
+-        if getattr(place, "location_confirmed", False):
+-            continue
+-        if not force and not place_needs_geocode(place, dest_center):
+-            continue
+-
+-        search_name = (place.map_search or place.name).strip()
+-        llm_coords: tuple[float, float] | None = None
+-        if place.latitude is not None and place.longitude is not None:
+-            llm_coords = (place.latitude, place.longitude)
+-
+-        coords = resolve_place_coordinates(
+-            search_name,
+-            location_hint=place.location_hint,
+-            destination=destination,
+-            dest_context=dest_context,
+-            dest_center=dest_center,
+-            llm_coords=llm_coords,
+-        )
+-        if coords is None:
+-            continue
+-
+-        place.latitude, place.longitude = coords
+-        updated += 1
+-        time.sleep(0.05)
+-
+-    if updated:
+-        db.commit()
+-
+-    return updated
+diff --git a/backend/app/services/hotels.py b/backend/app/services/hotels.py
+index 3cc63ab..336297a 100644
+--- a/backend/app/services/hotels.py
++++ b/backend/app/services/hotels.py
+@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
+ from app.models.user import User
+ from app.schemas.trip import HotelOptionPublic, HotelsResponse
+ from app.services.geocoding import search_lodging_hotels
+-from app.services.itinerary import _get_trip_for_user
++from app.services.itinerary import get_owned_trip
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -241,7 +241,7 @@ def _mapbox_hotels(
+ 
+ 
+ def search_hotels(db: Session, user: User, trip_plan_id: int) -> HotelsResponse:
+-    trip = _get_trip_for_user(db, user, trip_plan_id)
++    trip = get_owned_trip(db, user, trip_plan_id)
+     if not trip.include_hotels:
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Hotels not requested for this trip")
+ 
+diff --git a/backend/app/services/itinerary.py b/backend/app/services/itinerary.py
+index d8e5e7b..08e861b 100644
+--- a/backend/app/services/itinerary.py
++++ b/backend/app/services/itinerary.py
+@@ -1,9 +1,10 @@
+ import logging
+-import time
+-from datetime import date, timedelta
++import re
++from collections.abc import Callable
++from datetime import date, datetime, timedelta, timezone
+ 
+ from fastapi import HTTPException, status
+-from sqlalchemy import delete
++from sqlalchemy import delete, or_, update
+ from sqlalchemy.orm import Session, joinedload
+ 
+ from app.models.place import Place
+@@ -17,20 +18,11 @@ from app.schemas.trip import (
+     TripDetailResponse,
+     TripStatPublic,
+ )
+-from app.services.geocoding import (
+-    _coords_from_activity_payload,
+-    _destination_context,
+-    _resolve_destination_center,
+-    enrich_trip_places,
+-    mapbox_configured,
+-    resolve_place_coordinates,
+-    trip_needs_geocoding,
+-)
+-from app.services.destinations import _trip_context
+-from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
++from app.services.geocoding import mapbox_configured
++from app.services.destinations import trip_context
++from app.services.llm import ITINERARY_TIMEOUT, complete_chat, get_llm_model, get_llm_provider, llm_configured
+ from app.services.llm_json import (
+     ITINERARY_MAX_TOKENS,
+-    is_retryable_llm_error,
+     itinerary_max_tokens,
+     parse_llm_itinerary_object,
+ )
+@@ -48,11 +40,15 @@ TIME_SLOT_LABELS = {
+ MOCK_DAY_THEMES = ("Arrival & First Impressions", "Local Culture & Cuisine", "Highlights & Farewell")
+ 
+ 
+-def _trip_day_count(trip: TripPlan) -> int:
++def trip_day_count(trip: TripPlan, *, fallback: int = 3, from_places: bool = False) -> int:
+     if trip.start_date and trip.end_date and trip.end_date >= trip.start_date:
+         days = (trip.end_date - trip.start_date).days + 1
+         return max(1, min(days, 14))
+-    return 3
++    if from_places:
++        places = trip.places or []
++        if places:
++            return max(p.day_number for p in places)
++    return fallback
+ 
+ 
+ def _trip_date_for_day(trip: TripPlan, day_number: int) -> date | None:
+@@ -107,7 +103,7 @@ def _normalize_activities(raw_day: dict) -> list[dict]:
+ 
+ def _mock_itinerary(trip: TripPlan) -> dict:
+     destination = trip.destination or "your destination"
+-    num_days = _trip_day_count(trip)
++    num_days = trip_day_count(trip)
+     theme = trip.theme or "mixed"
+     purpose = trip.trip_purpose or "explore"
+ 
+@@ -145,14 +141,9 @@ def _mock_itinerary(trip: TripPlan) -> dict:
+     }
+ 
+ 
+-def _ai_itinerary(trip: TripPlan) -> dict:
+-    client = get_llm_client()
+-    if client is None:
+-        raise RuntimeError("No LLM client configured")
+-
+-    num_days = _trip_day_count(trip)
++def _ai_itinerary(trip: TripPlan, *, on_attempt: Callable[[], None] | None = None) -> dict:
++    num_days = trip_day_count(trip)
+     destination = trip.destination or "the chosen destination"
+-    model = get_llm_model()
+ 
+     prompt = f"""Create a {num_days}-day travel itinerary for {destination}.
+ Return JSON only with this shape:
+@@ -168,8 +159,6 @@ Return JSON only with this shape:
+           "name": "Perdana Botanical Garden",
+           "map_search": "Perdana Botanical Garden",
+           "location_hint": "neighborhood or district in {destination}",
+-          "latitude": 30.0444,
+-          "longitude": 31.2357,
+           "description": "Stroll through the lake and tropical plant collections.",
+           "type": "Culture|Food|Nature|Adventure|Relaxation|Shopping|Nightlife|Scenic",
+           "duration": "e.g. 2 hrs"
+@@ -185,7 +174,6 @@ Rules:
+ - name MUST be the real venue or landmark name (this is shown as the card title). Examples: "Perdana Botanical Garden", "Sultan Abu Bakar State Mosque" — NOT "Botanical Walk", "Cultural Immersion", or "Sunset Views".
+ - map_search must match name (same official venue name used for the map pin).
+ - description explains what the traveler does or sees at that venue (1-2 sentences).
+-- latitude and longitude are REQUIRED: accurate coordinates for the venue (decimal degrees, WGS84).
+ - Do NOT use vague venue names like "Nile cruise", "walking tour", "local food market", or "sunset viewpoint".
+ - For boats or cruises, name must be a specific dock, pier, or operator in {destination}.
+ - location_hint should name the neighborhood or district within {destination}.
+@@ -194,38 +182,37 @@ Rules:
+ - No markdown, code fences, or text outside the JSON object.
+ 
+ Preferences:
+-{_trip_context(trip)}
++{trip_context(trip)}
+ """
+ 
+-    last_error: Exception | None = None
+-    for attempt in range(3):
+-        try:
+-            token_budget = itinerary_max_tokens(num_days)
+-            if attempt > 0:
+-                token_budget = min(ITINERARY_MAX_TOKENS, token_budget + 2048 * attempt)
+-            response = client.chat.completions.create(
+-                model=model,
+-                messages=[
+-                    {"role": "system", "content": "You are a travel planner. Activity names must be real venue or landmark names, never generic labels like 'Food Tour' or 'Sunset Views'. Respond with valid JSON only."},
+-                    {"role": "user", "content": prompt},
+-                ],
+-                temperature=0.5,
+-                max_tokens=token_budget,
+-            )
+-            content = response.choices[0].message.content or ""
+-            return parse_llm_itinerary_object(content, expected_days=num_days)
+-        except Exception as exc:
+-            last_error = exc
+-            if is_retryable_llm_error(exc) and attempt < 2:
+-                wait = 2 * (attempt + 1)
+-                logger.info("LLM itinerary attempt %s failed, retrying in %ss: %s", attempt + 1, wait, exc)
+-                time.sleep(wait)
+-                continue
+-            raise
++    return complete_chat(
++        [
++            {"role": "system", "content": "You are a travel planner. Activity names must be real venue or landmark names, never generic labels like 'Food Tour' or 'Sunset Views'. Respond with valid JSON only."},
++            {"role": "user", "content": prompt},
++        ],
++        temperature=0.5,
++        max_tokens=itinerary_max_tokens(num_days),
++        timeout=ITINERARY_TIMEOUT,
++        token_bump=2048,
++        token_cap=ITINERARY_MAX_TOKENS,
++        parse=lambda content: parse_llm_itinerary_object(content, expected_days=num_days),
++        on_attempt=on_attempt,
++    )
+ 
+-    if last_error:
+-        raise last_error
+-    raise RuntimeError("LLM request failed")
++
++def _day_number_from_raw(raw_day: dict, fallback: int) -> int:
++    raw = raw_day.get("day", fallback)
++    if isinstance(raw, bool):
++        return fallback
++    if isinstance(raw, int):
++        return raw
++    match = re.search(r"\d+", str(raw))
++    if not match:
++        return fallback
++    try:
++        return int(match.group())
++    except ValueError:
++        return fallback
+ 
+ 
+ def _persist_itinerary(
+@@ -235,21 +222,15 @@ def _persist_itinerary(
+ ) -> list[Place]:
+     db.execute(delete(Place).where(Place.trip_plan_id == trip.id))
+ 
+-    dest_center: tuple[float, float] | None = None
+-    dest_context: dict = {}
+-    if trip.destination and mapbox_configured():
+-        dest_context = _destination_context(trip.destination)
+-        dest_center, dest_context = _resolve_destination_center(trip.destination, dest_context)
+-
+     places: list[Place] = []
+     raw_days = payload.get("days", [])
+     if not isinstance(raw_days, list):
+         raw_days = []
+ 
+-    for raw_day in raw_days:
++    for index, raw_day in enumerate(raw_days, start=1):
+         if not isinstance(raw_day, dict):
+             continue
+-        day_number = int(raw_day.get("day", len(places) + 1))
++        day_number = _day_number_from_raw(raw_day, index)
+         day_theme = raw_day.get("theme")
+         trip_date = _trip_date_for_day(trip, day_number)
+         activities = _normalize_activities(raw_day)
+@@ -271,18 +252,6 @@ def _persist_itinerary(
+             if not map_search:
+                 map_search = name
+             location_hint = str(activity.get("location_hint", "")).strip() or None
+-            llm_coords = _coords_from_activity_payload(activity, dest_center)
+-
+-            coords: tuple[float, float] | None = None
+-            if dest_center is not None:
+-                coords = resolve_place_coordinates(
+-                    map_search,
+-                    location_hint=location_hint,
+-                    destination=trip.destination or "",
+-                    dest_context=dest_context,
+-                    dest_center=dest_center,
+-                    llm_coords=llm_coords,
+-                )
+ 
+             place = Place(
+                 trip_plan_id=trip.id,
+@@ -294,8 +263,8 @@ def _persist_itinerary(
+                 name=name,
+                 map_search=map_search,
+                 location_hint=location_hint,
+-                latitude=coords[0] if coords else None,
+-                longitude=coords[1] if coords else None,
++                latitude=None,
++                longitude=None,
+                 description=str(activity.get("description", "")).strip() or None,
+                 activity_type=str(activity.get("type", "Activity")).strip() or None,
+                 duration=str(activity.get("duration", "1 hr")).strip() or None,
+@@ -306,7 +275,7 @@ def _persist_itinerary(
+     return places
+ 
+ 
+-def _build_response(
++def build_trip_response(
+     trip: TripPlan,
+     places: list[Place],
+     source: str,
+@@ -363,7 +332,7 @@ def _build_response(
+         if p.latitude is not None and p.longitude is not None
+     ]
+ 
+-    num_days = len(itinerary) or _trip_day_count(trip)
++    num_days = len(itinerary) or trip_day_count(trip)
+     return TripDetailResponse(
+         trip_plan=TripPlanPublic.model_validate(trip),
+         destination=trip.destination or "Your trip",
+@@ -381,7 +350,7 @@ def _build_response(
+     )
+ 
+ 
+-def _get_trip_for_user(db: Session, user: User, trip_plan_id: int) -> TripPlan:
++def get_owned_trip(db: Session, user: User, trip_plan_id: int) -> TripPlan:
+     trip = (
+         db.query(TripPlan)
+         .options(joinedload(TripPlan.places))
+@@ -421,56 +390,60 @@ def list_user_trips(db: Session, user: User) -> list[TripPlan]:
+     )
+ 
+ 
+-def update_place_location(
+-    db: Session,
+-    user: User,
+-    trip_plan_id: int,
+-    place_id: int,
+-    *,
+-    label: str,
+-    latitude: float,
+-    longitude: float,
+-    mapbox_id: str | None = None,
+-) -> TripDetailResponse:
+-    trip = _get_trip_for_user(db, user, trip_plan_id)
+-    place = next((p for p in trip.places if p.id == place_id), None)
+-    if place is None:
+-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Place not found")
+-
+-    place.latitude = latitude
+-    place.longitude = longitude
+-    place.name = label.strip()
+-    place.map_search = label.strip()
+-    place.mapbox_id = mapbox_id
+-    place.location_confirmed = True
+-    db.commit()
+-    db.refresh(trip)
+-
+-    places = list(trip.places)
+-    source = trip.itinerary_source or "generated"
+-    return _build_response(trip, places, source=source, fallback_reason=None)
+-
+-
+ def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailResponse:
+-    trip = _get_trip_for_user(db, user, trip_plan_id)
++    trip = get_owned_trip(db, user, trip_plan_id)
+     if not trip.places:
++        if trip.status == "generating":
++            return build_trip_response(trip, [], source="generating", fallback_reason=None)
+         raise HTTPException(
+             status_code=status.HTTP_404_NOT_FOUND,
+             detail="Itinerary not generated yet",
+         )
+ 
+     places = list(trip.places)
+-    if mapbox_configured() and trip_needs_geocoding(trip, places):
+-        enrich_trip_places(db, trip, places)
+-        db.refresh(trip)
+-        places = list(trip.places)
+-
+     source = trip.itinerary_source or "generated"
+-    return _build_response(trip, places, source=source, fallback_reason=None)
++    return build_trip_response(trip, places, source=source, fallback_reason=None)
++
++
++# How long a trip can sit in "generating" before we assume the request that
++# claimed it crashed/timed out and allow a new attempt to reclaim it.
++GENERATION_LOCK_TIMEOUT = timedelta(minutes=3)
++
++
++def _claim_generation_slot(db: Session, trip: TripPlan) -> None:
++    """Atomically flip the trip to status="generating" so a second concurrent
++    /trips/{id}/generate call (e.g. user backs out mid-generation and re-opens
++    the trip from My Trips before the first request finishes) can't also run
++    the LLM + persist step and create duplicate places for every day."""
++    stale_cutoff = datetime.now(timezone.utc) - GENERATION_LOCK_TIMEOUT
++    result = db.execute(
++        update(TripPlan)
++        .where(
++            TripPlan.id == trip.id,
++            or_(TripPlan.status != "generating", TripPlan.updated_at < stale_cutoff),
++        )
++        .values(status="generating", updated_at=datetime.now(timezone.utc))
++    )
++    db.commit()
++    if result.rowcount == 0:
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="This trip's itinerary is already being generated. Please wait a moment and try again.",
++        )
++    db.refresh(trip)
++
++
++def _refresh_generation_lock(db: Session, trip_id: int) -> None:
++    db.execute(
++        update(TripPlan)
++        .where(TripPlan.id == trip_id, TripPlan.status == "generating")
++        .values(updated_at=datetime.now(timezone.utc))
++    )
++    db.commit()
+ 
+ 
+ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTripResponse:
+-    trip = _get_trip_for_user(db, user, trip_plan_id)
++    trip = get_owned_trip(db, user, trip_plan_id)
+ 
+     if not trip.destination:
+         raise HTTPException(
+@@ -478,39 +451,54 @@ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTr
+             detail="Trip destination is required before generating an itinerary",
+         )
+ 
+-    source = "mock"
+-    fallback_reason: str | None = None
+-    tags_override: str | None = None
+-    payload: dict
+-
+-    if llm_configured():
+-        try:
+-            payload = _ai_itinerary(trip)
+-            source = get_llm_provider()
+-            tags_override = payload.get("tags") if isinstance(payload.get("tags"), str) else None
+-        except Exception as exc:
+-            fallback_reason = f"{type(exc).__name__}: {exc}"
+-            logger.warning(
+-                "LLM itinerary generation failed (provider=%s model=%s), using mock: %s",
+-                get_llm_provider(),
+-                get_llm_model(),
+-                fallback_reason,
+-            )
++    previous_status = trip.status
++    _claim_generation_slot(db, trip)
++
++    try:
++        source = "mock"
++        fallback_reason: str | None = None
++        tags_override: str | None = None
++        payload: dict
++
++        if llm_configured():
++            try:
++                payload = _ai_itinerary(
++                    trip,
++                    on_attempt=lambda: _refresh_generation_lock(db, trip.id),
++                )
++                source = get_llm_provider()
++                tags_override = payload.get("tags") if isinstance(payload.get("tags"), str) else None
++            except Exception as exc:
++                logger.warning(
++                    "LLM itinerary generation failed (provider=%s model=%s), using mock: %s",
++                    get_llm_provider(),
++                    get_llm_model(),
++                    exc,
++                )
++                fallback_reason = "LLM request failed"
++                payload = _mock_itinerary(trip)
++                tags_override = payload.get("tags")
++        else:
++            fallback_reason = "No LLM API key configured for provider " + get_llm_provider()
++            logger.info("LLM not configured; using mock itinerary")
+             payload = _mock_itinerary(trip)
+             tags_override = payload.get("tags")
+-    else:
+-        fallback_reason = "No LLM API key configured for provider " + get_llm_provider()
+-        logger.info("LLM not configured; using mock itinerary")
+-        payload = _mock_itinerary(trip)
+-        tags_override = payload.get("tags")
+-
+-    places = _persist_itinerary(db, trip, payload)
+-    trip.status = "itinerary_generated"
+-    trip.itinerary_source = source
+-    db.commit()
++
++        places = _persist_itinerary(db, trip, payload)
++        trip.status = "itinerary_generated"
++        trip.itinerary_source = source
++        db.commit()
++    except Exception:
++        # Release the "generating" lock immediately instead of making the next
++        # attempt wait out the full staleness timeout.
++        db.rollback()
++        db.execute(update(TripPlan).where(TripPlan.id == trip.id).values(status=previous_status))
++        db.commit()
++        raise
++
+     db.refresh(trip)
+     places = list(trip.places)
+ 
+     return GenerateTripResponse(
+-        **_build_response(trip, places, source, fallback_reason, tags_override).model_dump()
++        **build_trip_response(trip, places, source, fallback_reason, tags_override).model_dump()
+     )
+diff --git a/backend/app/services/llm.py b/backend/app/services/llm.py
+index c020510..b684d01 100644
+--- a/backend/app/services/llm.py
++++ b/backend/app/services/llm.py
+@@ -1,12 +1,30 @@
+ """LLM client — OpenRouter, Gemini, or direct OpenAI (pick via LLM_PROVIDER)."""
+ 
++import logging
++import time
++from collections.abc import Callable
++from typing import TypeVar
++
+ from openai import OpenAI
+ 
+ from app.config import settings
++from app.services.llm_json import is_retryable_llm_error
++
++logger = logging.getLogger(__name__)
+ 
+ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+ 
++LLM_ATTEMPTS = 3
++ITINERARY_TIMEOUT = 90.0
++CHAT_TIMEOUT = 35.0
++
++T = TypeVar("T")
++
++
++class LLMError(Exception):
++    """Raised when an LLM request fails after retries."""
++
+ 
+ def _active_provider() -> str:
+     explicit = settings.llm_provider.strip().lower()
+@@ -46,13 +64,15 @@ def get_llm_model() -> str:
+     return "gpt-4o-mini"
+ 
+ 
+-def get_llm_client() -> OpenAI | None:
++def get_llm_client(*, timeout: float = ITINERARY_TIMEOUT) -> OpenAI | None:
+     provider = _active_provider()
+ 
+     if provider == "gemini" and settings.gemini_api_key:
+         return OpenAI(
+             api_key=settings.gemini_api_key,
+             base_url=GEMINI_BASE_URL,
++            timeout=timeout,
++            max_retries=0,
+         )
+ 
+     if provider == "openrouter" and settings.openrouter_api_key:
+@@ -63,9 +83,58 @@ def get_llm_client() -> OpenAI | None:
+                 "HTTP-Referer": settings.openrouter_site_url,
+                 "X-Title": settings.openrouter_app_name,
+             },
++            timeout=timeout,
++            max_retries=0,
+         )
+ 
+     if provider == "openai" and settings.openai_api_key:
+-        return OpenAI(api_key=settings.openai_api_key)
++        return OpenAI(api_key=settings.openai_api_key, timeout=timeout, max_retries=0)
+ 
+     return None
++
++
++def complete_chat(
++    messages: list[dict],
++    *,
++    temperature: float,
++    max_tokens: int,
++    timeout: float,
++    token_bump: int = 0,
++    token_cap: int | None = None,
++    parse: Callable[[str], T] | None = None,
++    on_attempt: Callable[[], None] | None = None,
++) -> str | T:
++    """One completion with shared timeout/retry. Raises LLMError on failure."""
++    client = get_llm_client(timeout=timeout)
++    if client is None:
++        raise LLMError("No LLM client configured")
++
++    model = get_llm_model()
++    last_error: Exception | None = None
++    for attempt in range(LLM_ATTEMPTS):
++        if on_attempt:
++            on_attempt()
++        token_budget = max_tokens + token_bump * attempt
++        if token_cap is not None:
++            token_budget = min(token_cap, token_budget)
++        try:
++            response = client.chat.completions.create(
++                model=model,
++                messages=messages,
++                temperature=temperature,
++                max_tokens=token_budget,
++            )
++            content = response.choices[0].message.content or ""
++            if not content.strip():
++                raise ValueError("Empty LLM response")
++            return parse(content) if parse else content
++        except Exception as exc:
++            last_error = exc
++            if is_retryable_llm_error(exc) and attempt < LLM_ATTEMPTS - 1:
++                wait = 2 * (attempt + 1)
++                logger.info("LLM attempt %s failed, retrying in %ss: %s", attempt + 1, wait, exc)
++                time.sleep(wait)
++                continue
++            raise LLMError(str(exc)) from exc
++
++    raise LLMError(str(last_error) if last_error else "LLM request failed") from last_error
+diff --git a/backend/app/services/rate_limit.py b/backend/app/services/rate_limit.py
+new file mode 100644
+index 0000000..ab78250
+--- /dev/null
++++ b/backend/app/services/rate_limit.py
+@@ -0,0 +1,31 @@
++"""In-process rate limits for auth endpoints (ponytail: per-worker only; use Redis if you scale out)."""
++
++import time
++from collections import defaultdict
++
++from fastapi import HTTPException, Request, status
++
++_BUCKETS: dict[str, list[float]] = defaultdict(list)
++
++
++def _client_key(request: Request) -> str:
++    forwarded = request.headers.get("x-forwarded-for")
++    if forwarded:
++        return forwarded.split(",")[0].strip()
++    if request.client:
++        return request.client.host
++    return "unknown"
++
++
++def enforce_rate_limit(request: Request, scope: str, *, max_calls: int, window_seconds: int) -> None:
++    key = f"{scope}:{_client_key(request)}"
++    now = time.monotonic()
++    window_start = now - window_seconds
++    hits = [t for t in _BUCKETS[key] if t > window_start]
++    if len(hits) >= max_calls:
++        raise HTTPException(
++            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
++            detail="Too many requests. Please try again later.",
++        )
++    hits.append(now)
++    _BUCKETS[key] = hits
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index cfd2a10..c12ecdc 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -2,10 +2,10 @@ fastapi>=0.115.0
+ uvicorn[standard]>=0.32.0
+ sqlalchemy>=2.0.36
+ psycopg2-binary>=2.9.10
+-alembic>=1.14.0
+ pydantic-settings>=2.6.0
+ python-dotenv>=1.0.1
+ python-jose[cryptography]>=3.3.0
+ bcrypt>=4.2.0
+ email-validator>=2.2.0
+ openai>=1.55.0
++resend>=2.0.0
+diff --git a/backend/scripts/test_generate_flow.py b/backend/scripts/test_generate_flow.py
+index 9e3c4c0..3bb0c68 100644
+--- a/backend/scripts/test_generate_flow.py
++++ b/backend/scripts/test_generate_flow.py
+@@ -5,6 +5,8 @@ from pathlib import Path
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ 
+ from app.database import SessionLocal
++from app.models.chat_message import ChatMessage  # noqa: F401 — register table
++from app.models.community import TripComment, TripSave, TripVote  # noqa: F401
+ from app.models.trip_plan import TripPlan
+ from app.services.itinerary import _ai_itinerary
+ from app.services.llm import get_llm_model, get_llm_provider
+diff --git a/render.yaml b/render.yaml
+index acd0ade..39f1c79 100644
+--- a/render.yaml
++++ b/render.yaml
+@@ -26,6 +26,10 @@ services:
+         sync: false
+       - key: DUFFEL_ACCESS_TOKEN
+         sync: false
++      - key: RESEND_API_KEY
++        sync: false
++      - key: RESEND_FROM_EMAIL
++        sync: false
+       - key: OPENROUTER_SITE_URL
+         sync: false
+       - key: OPENROUTER_APP_NAME
+diff --git a/src/App.tsx b/src/App.tsx
+index 25383bb..21aa0e9 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -5,6 +5,7 @@ import { navigate } from "@/lib/navigation";
+ import HomePage from "@/pages/HomePage";
+ import LoginPage from "@/pages/LoginPage";
+ import RegisterPage from "@/pages/RegisterPage";
++import VerifyEmailPage from "@/pages/VerifyEmailPage";
+ 
+ function getBasePath(): string {
+   return import.meta.env.BASE_URL.replace(/\/$/, "");
+@@ -23,6 +24,7 @@ function getAppPath(): string {
+ function AppRoutes() {
+   const { isAuthenticated, isLoading } = useAuth();
+   const [path, setPath] = useState(getAppPath);
++  const [pendingVerification, setPendingVerification] = useState<{ email: string; autoSend: boolean } | null>(null);
+ 
+   useEffect(() => {
+     const onPopState = () => setPath(getAppPath());
+@@ -49,10 +51,27 @@ function AppRoutes() {
+   }
+ 
+   if (!isAuthenticated) {
++    if (pendingVerification) {
++      return (
++        <VerifyEmailPage
++          email={pendingVerification.email}
++          autoSendOnMount={pendingVerification.autoSend}
++          onVerified={() => {
++            setPendingVerification(null);
++            navigate("/");
++          }}
++          onBack={() => {
++            setPendingVerification(null);
++            navigate("/login");
++          }}
++        />
++      );
++    }
++
+     if (path === "/register") {
+       return (
+         <RegisterPage
+-          onSuccess={() => navigate("/")}
++          onSuccess={(email) => setPendingVerification({ email, autoSend: false })}
+           onGoLogin={() => navigate("/login")}
+         />
+       );
+@@ -62,6 +81,7 @@ function AppRoutes() {
+       <LoginPage
+         onSuccess={() => navigate("/")}
+         onGoRegister={() => navigate("/register")}
++        onUnverified={(email) => setPendingVerification({ email, autoSend: true })}
+       />
+     );
+   }
+diff --git a/src/components/trip/ChatbotSidebar.tsx b/src/components/trip/ChatbotSidebar.tsx
+index a139a56..604402b 100644
+--- a/src/components/trip/ChatbotSidebar.tsx
++++ b/src/components/trip/ChatbotSidebar.tsx
+@@ -89,7 +89,7 @@ export default function ChatbotSidebar(props: ChatbotSidebarProps) {
+   const { isOpen, onClose, initialInput = "", mode = "trip" } = props;
+   const isConsult = mode === "consult";
+   const tripPlanId = !isConsult ? props.tripPlanId : undefined;
+-  const destination = !isConsult ? props.destination : "Travel";
++  const destination = !isConsult ? (props.destination ?? "your trip") : "Travel";
+   const onItineraryUpdated = !isConsult ? props.onItineraryUpdated : undefined;
+   const onPlanTrip = isConsult ? props.onPlanTrip : undefined;
+ 
+diff --git a/src/contexts/AuthContext.tsx b/src/contexts/AuthContext.tsx
+index b05422b..52d942d 100644
+--- a/src/contexts/AuthContext.tsx
++++ b/src/contexts/AuthContext.tsx
+@@ -16,7 +16,9 @@ import {
+   login as loginRequest,
+   logout as logoutRequest,
+   register as registerRequest,
++  resendVerificationCode as resendVerificationCodeRequest,
+   storeAuth,
++  verifyEmail as verifyEmailRequest,
+   type LoginInput,
+   type RegisterInput,
+   type User,
+@@ -28,7 +30,9 @@ type AuthContextValue = {
+   isLoading: boolean;
+   isAuthenticated: boolean;
+   login: (input: LoginInput) => Promise<void>;
+-  register: (input: RegisterInput) => Promise<void>;
++  register: (input: RegisterInput) => Promise<{ email: string }>;
++  verifyEmail: (email: string, code: string) => Promise<void>;
++  resendVerificationCode: (email: string) => Promise<string>;
+   logout: () => void;
+ };
+ 
+@@ -66,11 +70,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
+ 
+   const register = useCallback(async (input: RegisterInput) => {
+     const result = await registerRequest(input);
++    return { email: result.email };
++  }, []);
++
++  const verifyEmail = useCallback(async (email: string, code: string) => {
++    const result = await verifyEmailRequest(email, code);
+     storeAuth(result.access_token, result.user);
+     clearLastPage();
+     setUser(result.user);
+   }, []);
+ 
++  const resendVerificationCode = useCallback(async (email: string) => {
++    const result = await resendVerificationCodeRequest(email);
++    return result.message;
++  }, []);
++
+   const logout = useCallback(() => {
+     logoutRequest();
+     setUser(null);
+@@ -83,9 +97,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
+       isAuthenticated: user !== null,
+       login,
+       register,
++      verifyEmail,
++      resendVerificationCode,
+       logout,
+     }),
+-    [user, isLoading, login, register, logout],
++    [user, isLoading, login, register, verifyEmail, resendVerificationCode, logout],
+   );
+ 
+   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+diff --git a/src/lib/auth.ts b/src/lib/auth.ts
+index 3f07e4c..f689914 100644
+--- a/src/lib/auth.ts
++++ b/src/lib/auth.ts
+@@ -7,6 +7,7 @@ export type User = {
+   last_name: string;
+   phone_num: string | null;
+   is_admin: boolean;
++  is_verified: boolean;
+   created_at: string;
+ };
+ 
+@@ -16,6 +17,11 @@ type AuthResponse = {
+   user: User;
+ };
+ 
++export type RegisterAcceptedResponse = {
++  email: string;
++  message: string;
++};
++
+ export type RegisterInput = {
+   email: string;
+   password: string;
+@@ -56,8 +62,8 @@ export function clearAuth(): void {
+   localStorage.removeItem(USER_KEY);
+ }
+ 
+-export async function register(input: RegisterInput): Promise<AuthResponse> {
+-  return apiFetch<AuthResponse>("/auth/register", {
++export async function register(input: RegisterInput): Promise<RegisterAcceptedResponse> {
++  return apiFetch<RegisterAcceptedResponse>("/auth/register", {
+     method: "POST",
+     body: JSON.stringify(input),
+   });
+@@ -70,6 +76,20 @@ export async function login(input: LoginInput): Promise<AuthResponse> {
+   });
+ }
+ 
++export async function verifyEmail(email: string, code: string): Promise<AuthResponse> {
++  return apiFetch<AuthResponse>("/auth/verify", {
++    method: "POST",
++    body: JSON.stringify({ email, code }),
++  });
++}
++
++export async function resendVerificationCode(email: string): Promise<RegisterAcceptedResponse> {
++  return apiFetch<RegisterAcceptedResponse>("/auth/resend-code", {
++    method: "POST",
++    body: JSON.stringify({ email }),
++  });
++}
++
+ export async function fetchMe(): Promise<User> {
+   return apiFetch<User>("/auth/me");
+ }
+diff --git a/src/lib/credentialsValidation.ts b/src/lib/credentialsValidation.ts
+index a0ce7e9..b1bc756 100644
+--- a/src/lib/credentialsValidation.ts
++++ b/src/lib/credentialsValidation.ts
+@@ -24,9 +24,9 @@ function isValidEmailFormat(email: string): boolean {
+     return false;
+   }
+ 
+-  const tld = labels[labels.length - 1];
+-  // Reject likely typos like user@gmail.co (single-label TLD must be 3+ chars).
+-  if (labels.length === 2 && tld.length < 3) return false;
++  const tld = labels[labels.length - 1].toLowerCase();
++  // Reject likely typos like user@gmail.co while allowing real 2-letter ccTLDs (.sa, .de, .io, .ai).
++  if (labels.length === 2 && tld.length === 2 && tld === "co") return false;
+ 
+   return true;
+ }
+diff --git a/src/lib/mapDirections.ts b/src/lib/mapDirections.ts
+index 0a30b88..094568c 100644
+--- a/src/lib/mapDirections.ts
++++ b/src/lib/mapDirections.ts
+@@ -1,33 +1,3 @@
+-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? "";
+-
+-/** Fetch a walking route polyline between ordered stops; falls back to null. */
+-export async function fetchWalkingRoute(
+-  coordinates: [number, number][],
+-): Promise<[number, number][] | null> {
+-  if (!MAPBOX_TOKEN || coordinates.length < 2) {
+-    return null;
+-  }
+-
+-  const path = coordinates.map(([lng, lat]) => `${lng},${lat}`).join(";");
+-  const url =
+-    `https://api.mapbox.com/directions/v5/mapbox/walking/${path}` +
+-    `?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
+-
+-  try {
+-    const response = await fetch(url);
+-    if (!response.ok) {
+-      return null;
+-    }
+-    const data = (await response.json()) as {
+-      routes?: Array<{ geometry?: { coordinates?: [number, number][] } }>;
+-    };
+-    const line = data.routes?.[0]?.geometry?.coordinates;
+-    return line && line.length >= 2 ? line : null;
+-  } catch {
+-    return null;
+-  }
+-}
+-
+ /** Build a maps search query from venue name + trip destination (no API key). */
+ function activityMapsQuery(venueName: string, destination: string): string {
+   return `${venueName} ${destination}`.trim();
+diff --git a/src/lib/places.ts b/src/lib/places.ts
+index bda9a25..b46067e 100644
+--- a/src/lib/places.ts
++++ b/src/lib/places.ts
+@@ -9,10 +9,6 @@ export interface PlaceSearchResult {
+   city?: string | null;
+ }
+ 
+-export interface ActivityPlaceSearchResult extends PlaceSearchResult {
+-  mapbox_id: string | null;
+-}
+-
+ export type PlaceSearchKind = "city" | "airport";
+ 
+ export async function searchPlaces(
+@@ -28,17 +24,3 @@ export async function searchPlaces(
+   });
+   return apiFetch<PlaceSearchResult[]>(`/places/search?${params.toString()}`);
+ }
+-
+-export async function searchActivityPlaces(
+-  query: string,
+-  tripPlanId: number,
+-): Promise<ActivityPlaceSearchResult[]> {
+-  if (query.trim().length < 2) {
+-    return [];
+-  }
+-  const params = new URLSearchParams({
+-    q: query.trim(),
+-    trip_plan_id: String(tripPlanId),
+-  });
+-  return apiFetch<ActivityPlaceSearchResult[]>(`/places/search-poi?${params.toString()}`);
+-}
+diff --git a/src/lib/quizValidation.ts b/src/lib/quizValidation.ts
+index 738c5ce..0080472 100644
+--- a/src/lib/quizValidation.ts
++++ b/src/lib/quizValidation.ts
+@@ -161,11 +161,14 @@ export function isQuestionStepReady(
+   value: AnswerValue | undefined,
+   cityMeta?: { confirmedFromList: boolean; searchSettled: boolean; hasSuggestions: boolean },
+ ): boolean {
++  if (question.question_type === "choice" && question.key === "travel_extras" && value === undefined) {
++    return true;
++  }
++
+   if (value === undefined) return false;
+ 
+   switch (question.question_type) {
+     case "choice":
+-      if (question.key === "travel_extras" && value === undefined) return true;
+       return validateChoice(question, value) === null;
+     case "date_range": {
+       const dates = value as { start: string; end: string };
+diff --git a/src/lib/trips.ts b/src/lib/trips.ts
+index 3dcb1d9..2dbd9fd 100644
+--- a/src/lib/trips.ts
++++ b/src/lib/trips.ts
+@@ -64,20 +64,6 @@ export interface TripListItem {
+   updated_at: string;
+ }
+ 
+-export interface TripAlternative {
+-  title: string;
+-  tagline: string;
+-  highlights: string[];
+-  budget_note: string;
+-  match_percent: number;
+-}
+-
+-export interface EditTripResult {
+-  alternatives: TripAlternative[];
+-  source: string;
+-  fallback_reason: string | null;
+-}
+-
+ export interface StoredChatMessage {
+   id: number;
+   role: "user" | "assistant";
+@@ -227,11 +213,6 @@ export async function getTripHotels(tripPlanId: number): Promise<HotelsResult> {
+   return apiFetch<HotelsResult>(`/trips/${tripPlanId}/hotels`);
+ }
+ 
+-export async function enrichTripPlaces(tripPlanId: number): Promise<TripDetail> {
+-  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/enrich-places`, { method: "POST" });
+-  return normalizeTripDetail(result);
+-}
+-
+ const LAST_TRIP_KEY = "rihlatech_last_trip_id";
+ const LAST_PAGE_KEY = "rihlatech_last_page";
+ 
+@@ -268,16 +249,6 @@ export async function listTrips(): Promise<TripListItem[]> {
+   return result.trips;
+ }
+ 
+-export async function editTrip(
+-  tripPlanId: number,
+-  prompt = "Suggest 3 alternative destinations similar to this trip.",
+-): Promise<EditTripResult> {
+-  return apiFetch<EditTripResult>(`/trips/${tripPlanId}/edit`, {
+-    method: "POST",
+-    body: JSON.stringify({ prompt }),
+-  });
+-}
+-
+ export async function getChatMessages(tripPlanId: number): Promise<StoredChatMessage[]> {
+   const result = await apiFetch<{ messages: StoredChatMessage[] }>(`/chat/${tripPlanId}/messages`);
+   return result.messages;
+@@ -325,15 +296,3 @@ export async function sendConsultMessage(
+ export async function deleteTrip(tripPlanId: number): Promise<void> {
+   await apiFetch<void>(`/trips/${tripPlanId}`, { method: "DELETE" });
+ }
+-
+-export async function updatePlaceLocation(
+-  tripPlanId: number,
+-  placeId: number,
+-  payload: { label: string; latitude: number; longitude: number; mapbox_id?: string | null },
+-): Promise<TripDetail> {
+-  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/places/${placeId}`, {
+-    method: "PATCH",
+-    body: JSON.stringify(payload),
+-  });
+-  return normalizeTripDetail(result);
+-}
+diff --git a/src/main.tsx b/src/main.tsx
+index 03c1b0f..87fad5d 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -1,7 +1,6 @@
+ import { createRoot } from "react-dom/client";
+ import App from "./App";
+ import "./index.css";
+-import "@/lib/mapboxSetup";
+ import { registerServiceWorker } from "@/lib/pwa";
+ 
+ registerServiceWorker();
+diff --git a/src/pages/AppDashboardPage.tsx b/src/pages/AppDashboardPage.tsx
+index 1048c37..70afd0d 100644
+--- a/src/pages/AppDashboardPage.tsx
++++ b/src/pages/AppDashboardPage.tsx
+@@ -12,7 +12,7 @@ import { listTrips, type TripListItem } from "@/lib/trips";
+ type AppDashboardPageProps = {
+   onNavigate: (tab: AppTab) => void;
+   onPlanTrip: () => void;
+-  onOpenTrip: (tripPlanId: number) => void;
++  onOpenTrip: (tripPlanId: number, hasDestination: boolean) => void;
+ };
+ 
+ function formatDateRange(start: string | null, end: string | null): string {
+@@ -174,7 +174,7 @@ export default function AppDashboardPage({ onNavigate, onPlanTrip, onOpenTrip }:
+                 initial={{ opacity: 0, y: 10 }}
+                 animate={{ opacity: 1, y: 0 }}
+                 transition={{ delay: i * 0.05 }}
+-                onClick={() => onOpenTrip(trip.id)}
++                onClick={() => onOpenTrip(trip.id, Boolean(trip.destination))}
+                 className="w-full rounded-2xl px-4 py-4 flex items-center gap-3 text-left cursor-pointer"
+                 style={{
+                   background: theme.activityCardBg,
+diff --git a/src/pages/CommunityTripPage.tsx b/src/pages/CommunityTripPage.tsx
+index a63d736..37ae681 100644
+--- a/src/pages/CommunityTripPage.tsx
++++ b/src/pages/CommunityTripPage.tsx
+@@ -127,13 +127,10 @@ function ActivityRow({
+   previous: TripActivity | null;
+ }) {
+   const { theme } = useTheme();
+-  const typeStyle = getActivityTypeStyle(activity.type, theme);
+-  const mapsUrl =
+-    activity.latitude != null && activity.longitude != null
+-      ? previous
+-        ? googleMapsLegUrl(previous.name, activity.name, destination)
+-        : googleMapsSearchUrl(activity.name, destination)
+-      : googleMapsSearchUrl(activity.name, destination);
++  const typeStyle = getActivityTypeStyle(activity.type);
++  const mapsUrl = previous
++    ? googleMapsLegUrl(previous.name, activity.name, destination)
++    : googleMapsSearchUrl(activity.name, destination);
+ 
+   return (
+     <div
+@@ -146,7 +143,7 @@ function ActivityRow({
+         </span>
+         <span
+           className="px-2 py-0.5 rounded-full text-xs"
+-          style={{ background: typeStyle.bg, color: typeStyle.text, fontFamily: "system-ui, sans-serif" }}
++          style={{ background: typeStyle.gradient, color: "#fff", fontFamily: "system-ui, sans-serif" }}
+         >
+           {activity.type}
+         </span>
+diff --git a/src/pages/HomePage.tsx b/src/pages/HomePage.tsx
+index 758472b..3839448 100644
+--- a/src/pages/HomePage.tsx
++++ b/src/pages/HomePage.tsx
+@@ -59,10 +59,10 @@ function TripPlanner() {
+     clearLastTripId();
+   }
+ 
+-  function goToResult(id: number) {
++  function goToResult(id: number, hasDestination = true) {
+     setTripPlanId(id);
+     saveLastTripId(id);
+-    setPage("result");
++    setPage(hasDestination ? "result" : "destinations");
+   }
+ 
+   function startNewTrip() {
+@@ -72,10 +72,10 @@ function TripPlanner() {
+     setPage("quiz");
+   }
+ 
+-  function openTrip(id: number) {
++  function openTrip(id: number, hasDestination = true) {
+     setTripPlanId(id);
+     saveLastTripId(id);
+-    setPage("result");
++    setPage(hasDestination ? "result" : "destinations");
+   }
+ 
+   function openCommunityTrip(id: number) {
+diff --git a/src/pages/LoginPage.tsx b/src/pages/LoginPage.tsx
+index f18a958..bb2a0d9 100644
+--- a/src/pages/LoginPage.tsx
++++ b/src/pages/LoginPage.tsx
+@@ -9,6 +9,7 @@ import { lightTheme } from "@/themes";
+ type LoginPageProps = {
+   onSuccess: () => void;
+   onGoRegister: () => void;
++  onUnverified: (email: string) => void;
+ };
+ 
+ const theme = lightTheme;
+@@ -27,7 +28,7 @@ const labelStyle = {
+   fontWeight: 500,
+ };
+ 
+-export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
++export default function LoginPage({ onSuccess, onGoRegister, onUnverified }: LoginPageProps) {
+   const { login } = useAuth();
+   const [email, setEmail] = useState("");
+   const [password, setPassword] = useState("");
+@@ -49,12 +50,17 @@ export default function LoginPage({ onSuccess, onGoRegister }: LoginPageProps) {
+       return;
+     }
+ 
++    const normalizedEmail = normalizeEmail(email);
+     setIsSubmitting(true);
+ 
+     try {
+-      await login({ email: normalizeEmail(email), password });
++      await login({ email: normalizedEmail, password });
+       onSuccess();
+     } catch (err) {
++      if (err instanceof ApiError && err.status === 403) {
++        onUnverified(normalizedEmail);
++        return;
++      }
+       setError(err instanceof ApiError ? err.message : "Login failed");
+     } finally {
+       setIsSubmitting(false);
+diff --git a/src/pages/MyTripsPage.tsx b/src/pages/MyTripsPage.tsx
+index 3517547..6ea9008 100644
+--- a/src/pages/MyTripsPage.tsx
++++ b/src/pages/MyTripsPage.tsx
+@@ -9,7 +9,7 @@ import type { AppTab } from "@/lib/navigation";
+ import { deleteTrip, listTrips, type TripListItem } from "@/lib/trips";
+ 
+ type MyTripsPageProps = {
+-  onSelectTrip: (tripPlanId: number) => void;
++  onSelectTrip: (tripPlanId: number, hasDestination: boolean) => void;
+   onNewTrip: () => void;
+   onHome: () => void;
+   onNavigate: (tab: AppTab) => void;
+@@ -173,7 +173,7 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onNavigat
+               >
+                 <button
+                   type="button"
+-                  onClick={() => onSelectTrip(trip.id)}
++                  onClick={() => onSelectTrip(trip.id, Boolean(trip.destination))}
+                   className="flex items-center gap-4 flex-1 min-w-0 text-left cursor-pointer"
+                   style={{ background: "none", border: "none", padding: 0 }}
+                 >
+diff --git a/src/pages/RegisterPage.tsx b/src/pages/RegisterPage.tsx
+index f3e5d17..f222963 100644
+--- a/src/pages/RegisterPage.tsx
++++ b/src/pages/RegisterPage.tsx
+@@ -12,7 +12,7 @@ import {
+ import { lightTheme } from "@/themes";
+ 
+ type RegisterPageProps = {
+-  onSuccess: () => void;
++  onSuccess: (email: string) => void;
+   onGoLogin: () => void;
+ };
+ 
+@@ -60,14 +60,15 @@ export default function RegisterPage({ onSuccess, onGoLogin }: RegisterPageProps
+     setIsSubmitting(true);
+ 
+     try {
++      const normalizedEmail = normalizeEmail(email);
+       await register({
+         first_name: firstName.trim(),
+         last_name: lastName.trim(),
+-        email: normalizeEmail(email),
++        email: normalizedEmail,
+         password,
+         phone_num: phone.trim() || undefined,
+       });
+-      onSuccess();
++      onSuccess(normalizedEmail);
+     } catch (err) {
+       setError(err instanceof ApiError ? err.message : "Registration failed");
+     } finally {
+diff --git a/src/pages/TripResult.tsx b/src/pages/TripResult.tsx
+index e62a902..f4ebd5b 100644
+--- a/src/pages/TripResult.tsx
++++ b/src/pages/TripResult.tsx
+@@ -14,10 +14,82 @@ import {
+   googleMapsSearchUrl,
+ } from "@/lib/mapDirections";
+ import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
+-import { enrichTripPlaces, generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, tripHasItineraryActivities, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
++import { generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, tripHasItineraryActivities, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
+ import { shareTrip, unshareTrip } from "@/lib/community";
+ import type { AppTab } from "@/lib/navigation";
+ 
++function sleep(ms: number, signal?: AbortSignal): Promise<void> {
++  return new Promise((resolve, reject) => {
++    if (signal?.aborted) {
++      reject(new DOMException("Aborted", "AbortError"));
++      return;
++    }
++    let timer: ReturnType<typeof setTimeout>;
++    const onAbort = () => {
++      clearTimeout(timer);
++      reject(new DOMException("Aborted", "AbortError"));
++    };
++    timer = setTimeout(() => {
++      signal?.removeEventListener("abort", onAbort);
++      resolve();
++    }, ms);
++    signal?.addEventListener("abort", onAbort, { once: true });
++  });
++}
++
++function isAbortError(err: unknown): boolean {
++  return err instanceof DOMException && err.name === "AbortError";
++}
++
++const GENERATE_POLL_MS = 3000;
++const GENERATE_POLL_MAX_MS = 6 * 60 * 1000;
++
++// Backend returns 409 when another request is already generating this trip's
++// itinerary (e.g. user backed out and re-opened the trip before the first
++// attempt finished). Poll until it completes instead of surfacing a dead-end
++// error that would otherwise require a manual retry.
++async function waitForItineraryReady(tripPlanId: number, signal?: AbortSignal): Promise<TripDetail> {
++  const started = Date.now();
++  while (Date.now() - started < GENERATE_POLL_MAX_MS) {
++    await sleep(GENERATE_POLL_MS, signal);
++    if (signal?.aborted) {
++      throw new DOMException("Aborted", "AbortError");
++    }
++    try {
++      const trip = await getTrip(tripPlanId);
++      if (signal?.aborted) {
++        throw new DOMException("Aborted", "AbortError");
++      }
++      if (tripHasItineraryActivities(trip) || trip.source === "mock") {
++        return trip;
++      }
++      if (trip.trip_plan.status !== "generating") {
++        throw new ApiError(409, "Itinerary generation stopped before it finished. Please try again.");
++      }
++    } catch (err: unknown) {
++      if (isAbortError(err)) {
++        throw err;
++      }
++      if (!(err instanceof ApiError) || err.status !== 404) {
++        throw err;
++      }
++      throw new ApiError(409, "Itinerary generation stopped before it finished. Please try again.");
++    }
++  }
++  throw new ApiError(409, "Itinerary generation is taking longer than expected. Please try again.");
++}
++
++async function generateOrWaitForItinerary(tripPlanId: number, signal?: AbortSignal): Promise<TripDetail> {
++  try {
++    return await generateTrip(tripPlanId);
++  } catch (err: unknown) {
++    if (err instanceof ApiError && err.status === 409) {
++      return waitForItineraryReady(tripPlanId, signal);
++    }
++    throw err;
++  }
++}
++
+ type TripResultProps = {
+   tripPlanId: number;
+   onBack: () => void;
+@@ -320,10 +392,11 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
+   const [shareOpen, setShareOpen] = useState(false);
+   const [shareCaption, setShareCaption] = useState("");
+   const [shareBusy, setShareBusy] = useState(false);
+-  const enrichStarted = useRef(false);
+   const itineraryRetryRef = useRef(0);
++  const loadAbortRef = useRef<AbortController | null>(null);
+ 
+-  const loadItinerary = useCallback(async (options?: { forceGenerate?: boolean }) => {
++  const loadItinerary = useCallback(async (options?: { forceGenerate?: boolean; signal?: AbortSignal }) => {
++    const signal = options?.signal ?? loadAbortRef.current?.signal;
+     setLoading(true);
+     setError(null);
+     setItineraryError(null);
+@@ -334,6 +407,9 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
+         setLoadingPhase("fetch");
+         try {
+           const existing = await getTrip(tripPlanId);
++          if (signal?.aborted) {
++            return;
++          }
+           if (tripHasItineraryActivities(existing)) {
+             setTrip(existing);
+             return;
+@@ -346,10 +422,16 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
+       }
+ 
+       setLoadingPhase("generate");
+-      let result = await generateTrip(tripPlanId);
++      let result = await generateOrWaitForItinerary(tripPlanId, signal);
++      if (signal?.aborted) {
++        return;
++      }
+       if (!tripHasItineraryActivities(result) && itineraryRetryRef.current < 1) {
+         itineraryRetryRef.current += 1;
+-        result = await generateTrip(tripPlanId);
++        result = await generateOrWaitForItinerary(tripPlanId, signal);
++        if (signal?.aborted) {
++          return;
++        }
+       }
+ 
+       setTrip(result);
+@@ -357,9 +439,14 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
+         setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
+       }
+     } catch (err: unknown) {
++      if (isAbortError(err) || signal?.aborted) {
++        return;
++      }
+       setError(err instanceof ApiError ? err.message : "Failed to load trip");
+     } finally {
+-      setLoading(false);
++      if (!signal?.aborted) {
++        setLoading(false);
++      }
+     }
+   }, [tripPlanId]);
+ 
+@@ -368,23 +455,36 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
+     setLoading(true);
+     setLoadingPhase("generate");
+     setError(null);
++    const signal = loadAbortRef.current?.signal;
+     try {
+-      const result = await generateTrip(tripPlanId);
++      const result = await generateOrWaitForItinerary(tripPlanId, signal);
++      if (signal?.aborted) {
++        return;
++      }
+       setTrip(result);
+       if (!tripHasItineraryActivities(result)) {
+         setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
+       }
+     } catch (err: unknown) {
++      if (isAbortError(err) || signal?.aborted) {
++        return;
++      }
+       setError(err instanceof ApiError ? err.message : "Failed to generate itinerary");
+     } finally {
+-      setLoading(false);
++      if (!signal?.aborted) {
++        setLoading(false);
++      }
+     }
+   }, [tripPlanId]);
+ 
+   useEffect(() => {
+-    enrichStarted.current = false;
++    const ac = new AbortController();
++    loadAbortRef.current = ac;
+     saveLastTripId(tripPlanId);
+-    loadItinerary();
++    void loadItinerary({ signal: ac.signal });
++    return () => {
++      ac.abort();
++    };
+   }, [loadItinerary, tripPlanId]);
+ 
+   useEffect(() => {
+@@ -411,17 +511,6 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
+     }
+   }, [trip, tripPlanId]);
+ 
+-  useEffect(() => {
+-    if (!trip?.geocoding_configured || enrichStarted.current) return;
+-    const activityCount = trip.itinerary.reduce((sum, day) => sum + day.activities.length, 0);
+-    if (activityCount === 0 || trip.places_geocoded >= activityCount) return;
+-
+-    enrichStarted.current = true;
+-    enrichTripPlaces(tripPlanId)
+-      .then(setTrip)
+-      .catch(() => {});
+-  }, [trip, tripPlanId]);
+-
+   async function handleShare() {
+     if (!trip || shareBusy) return;
+     setShareBusy(true);
+@@ -461,7 +550,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
+         <PlanningBackHeader onBack={onBack} />
+         <TripPlanningLoader
+           title={loadingPhase === "fetch" ? "Loading your trip..." : "Generating your AI itinerary..."}
+-          subtitle={loadingPhase === "generate" ? "This can take up to a minute while we build your personalized plan." : undefined}
++          subtitle={loadingPhase === "generate" ? "Still generating your itinerary. Longer trips can take several minutes." : undefined}
+         />
+       </div>
+     );
+@@ -481,7 +570,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
+           <div className="flex gap-3">
+             <button
+               type="button"
+-              onClick={loadItinerary}
++              onClick={() => loadItinerary()}
+               className="px-4 py-2.5 rounded-xl"
+               style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, color: "#fff", border: "none", fontFamily: "system-ui, sans-serif" }}
+             >
+diff --git a/src/pages/VerifyEmailPage.tsx b/src/pages/VerifyEmailPage.tsx
+new file mode 100644
+index 0000000..d0766e7
+--- /dev/null
++++ b/src/pages/VerifyEmailPage.tsx
+@@ -0,0 +1,166 @@
++import { FormEvent, useEffect, useRef, useState } from "react";
++
++import { authInputStyle, authLabelStyle, AuthLayout } from "@/components/auth/AuthLayout";
++import { useAuth } from "@/contexts/AuthContext";
++import { ApiError } from "@/lib/api";
++import { lightTheme } from "@/themes";
++
++type VerifyEmailPageProps = {
++  email: string;
++  onVerified: () => void;
++  onBack: () => void;
++  /** Auto-request a fresh code on mount (e.g. arriving here from a "not verified" login attempt, where no code was just sent). */
++  autoSendOnMount?: boolean;
++};
++
++const theme = lightTheme;
++const RESEND_COOLDOWN_SECONDS = 60;
++
++export default function VerifyEmailPage({ email, onVerified, onBack, autoSendOnMount }: VerifyEmailPageProps) {
++  const { verifyEmail, resendVerificationCode } = useAuth();
++  const [code, setCode] = useState("");
++  const [error, setError] = useState<string | null>(null);
++  const [info, setInfo] = useState<string>(`We sent a 6-digit code to ${email}.`);
++  const [isSubmitting, setIsSubmitting] = useState(false);
++  const [isResending, setIsResending] = useState(false);
++  const [cooldown, setCooldown] = useState(0);
++  const sentOnMount = useRef(false);
++
++  useEffect(() => {
++    if (!autoSendOnMount || sentOnMount.current) return;
++    sentOnMount.current = true;
++    resendVerificationCode(email)
++      .then(() => setCooldown(RESEND_COOLDOWN_SECONDS))
++      .catch(() => {
++        // Login already told the user verification is required; a failed
++        // silent resend here (e.g. cooldown from a very recent code) isn't
++        // worth surfacing — they can still use the manual Resend button.
++      });
++  }, [autoSendOnMount, email, resendVerificationCode]);
++
++  useEffect(() => {
++    if (cooldown <= 0) return;
++    const timer = setInterval(() => setCooldown((c) => Math.max(0, c - 1)), 1000);
++    return () => clearInterval(timer);
++  }, [cooldown]);
++
++  async function handleSubmit(event: FormEvent) {
++    event.preventDefault();
++    setError(null);
++
++    if (!/^\d{6}$/.test(code.trim())) {
++      setError("Enter the 6-digit code.");
++      return;
++    }
++
++    setIsSubmitting(true);
++    try {
++      await verifyEmail(email, code.trim());
++      onVerified();
++    } catch (err) {
++      setError(err instanceof ApiError ? err.message : "Verification failed");
++    } finally {
++      setIsSubmitting(false);
++    }
++  }
++
++  async function handleResend() {
++    if (cooldown > 0 || isResending) return;
++    setError(null);
++    setIsResending(true);
++    try {
++      const message = await resendVerificationCode(email);
++      setInfo(message);
++      setCooldown(RESEND_COOLDOWN_SECONDS);
++    } catch (err) {
++      if (err instanceof ApiError && err.status === 429) {
++        setInfo(err.message);
++        setCooldown(RESEND_COOLDOWN_SECONDS);
++      } else {
++        setError(err instanceof ApiError ? err.message : "Failed to resend code");
++      }
++    } finally {
++      setIsResending(false);
++    }
++  }
++
++  return (
++    <AuthLayout
++      title="Verify your email"
++      subtitle="Enter the code we sent to finish signing in"
++      footer={
++        <>
++          Wrong email?{" "}
++          <button
++            type="button"
++            onClick={onBack}
++            className="underline-offset-4 hover:underline cursor-pointer"
++            style={{ color: theme.accentSky, background: "none", border: "none", fontFamily: "inherit" }}
++          >
++            Back to sign in
++          </button>
++        </>
++      }
++    >
++      <form onSubmit={handleSubmit} className="space-y-4">
++        {info && !error && (
++          <p className="text-sm" style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}>
++            {info}
++          </p>
++        )}
++
++        <div className="space-y-2">
++          <label htmlFor="code" style={authLabelStyle}>
++            Verification code
++          </label>
++          <input
++            id="code"
++            value={code}
++            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
++            inputMode="numeric"
++            autoComplete="one-time-code"
++            placeholder="000000"
++            required
++            className="w-full rounded-xl px-4 py-3 outline-none min-h-[48px] text-center text-lg tracking-[0.5em]"
++            style={authInputStyle}
++          />
++        </div>
++
++        {error && (
++          <p className="text-sm" style={{ color: "#c62828", fontFamily: "system-ui, sans-serif" }}>
++            {error}
++          </p>
++        )}
++
++        <button
++          type="submit"
++          disabled={isSubmitting}
++          className="w-full rounded-xl py-3 font-medium min-h-[48px] cursor-pointer disabled:opacity-60"
++          style={{
++            background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
++            color: "#fff",
++            border: "none",
++            fontFamily: "system-ui, sans-serif",
++          }}
++        >
++          {isSubmitting ? "Verifying..." : "Verify email"}
++        </button>
++
++        <button
++          type="button"
++          onClick={handleResend}
++          disabled={cooldown > 0 || isResending}
++          className="w-full rounded-xl py-2.5 font-medium min-h-[44px] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
++          style={{
++            background: theme.optionBg,
++            color: theme.body,
++            border: `1px solid ${theme.border}`,
++            fontFamily: "system-ui, sans-serif",
++          }}
++        >
++          {isResending ? "Sending..." : cooldown > 0 ? `Resend code in ${cooldown}s` : "Resend code"}
++        </button>
++      </form>
++    </AuthLayout>
++  );
++}

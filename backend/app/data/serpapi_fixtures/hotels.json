@@ -1,0 +1,313 @@
+{
+  "search_metadata": {
+    "id": "6acabd0ed868dd8dd2c496b2",
+    "status": "Success",
+    "json_endpoint": "https://serpapi.com/searches/OrF7TQaVdd0NjZmORSmzkeLA_Y_zwFH6AZ1il2NgjrU/6acabd0ed868dd8dd2c496b2.json",
+    "markdown_endpoint": "https://serpapi.com/searches/OrF7TQaVdd0NjZmORSmzkeLA_Y_zwFH6AZ1il2NgjrU/6acabd0ed868dd8dd2c496b2.md",
+    "created_at": "2026-10-10T22:32:46.462Z",
+    "processed_at": "2026-10-10T22:32:46.463Z",
+    "google_hotels_url": "https://www.google.com/travel/search?q=hotels+in+Paris%2C+France&hl=en&gl=sa",
+    "raw_html_file": "https://serpapi.com/searches/OrF7TQaVdd0NjZmORSmzkeLA_Y_zwFH6AZ1il2NgjrU/6acabd0ed868dd8dd2c496b2.html",
+    "prettify_html_file": "https://serpapi.com/searches/OrF7TQaVdd0NjZmORSmzkeLA_Y_zwFH6AZ1il2NgjrU/6acabd0ed868dd8dd2c496b2.prettify",
+    "total_time_taken": {
+      "float": 3.522488832473755
+    }
+  },
+  "search_parameters": {
+    "engine": "google_hotels",
+    "q": "hotels in Paris, France",
+    "gl": "sa",
+    "hl": "en",
+    "currency": "SAR",
+    "check_in_date": "2026-11-25",
+    "check_out_date": "2026-11-30",
+    "adults": 2,
+    "children": 1,
+    "children_ages": "10",
+    "hotel_class": "3,4"
+  },
+  "search_information": {
+    "total_results": 1454
+  },
+  "brands": [
+    {
+      "id": 33,
+      "name": "Accor Live Limitless",
+      "children": [
+        {
+          "id": 15,
+          "name": "Adagio"
+        },
+        {
+          "id": 278,
+          "name": "Adagio Access"
+        }
+      ]
+    },
+    {
+      "id": 306,
+      "name": "Appart'City"
+    }
+  ],
+  "ads": [
+    {
+      "name": "Paris Marriott Rive Gauche Hotel & Conference Center",
+      "source": "Expedia.com",
+      "source_icon": "https://www.gstatic.com/travel-hotels/branding/ac238c97-1652-4830-8da8-bb8d8883af88.png",
+      "link": "https://www.google.com/aclk?sa=l&ai=DChsSEwii44_bwLCXAxW5ysIEHXxSGW8YACICCAEQCRoCcHY&co=1&gclid=EAIaIQobChMIouOP28CwlwMVucrCBB18UhlvEA0YASABEgKgAfD_BwE&cid=CAASugHkaIBPmHYQFRXPxj7aZUvkFWHu2XhQ3xaMTSR7umty_dthVrrobSn-vU3B5cFVbk9lk4hGp1hQ6bEyLTXW8UU-1B_0cZr5vABMKmaSulgOnG1FMl6OehkR2u7iUn7GdP843R65WxBQLh0HWsiO6a4a2Luw2FDSCORPxWcNNQ-Q_ZWYPBeOKstJR6lZjKzJFz1IHkKhXzCLUEJMJycnE-0sRJFQ4X2A7D72koU_ex3LIMak2194JU9QOVY&sig=AOD64_3zPS11C6BLtOSpFtKMj0BQBpf6Cw&adurl=",
+      "property_token": "CgoIhpPA4Yf_yZ8JEAE",
+      "serpapi_property_details_link": "https://serpapi.com/search.json?adults=2&check_in_date=2026-11-25&check_out_date=2026-11-30&children=1&children_ages=10&currency=SAR&engine=google_hotels&gl=sa&hl=en&hotel_class=3%2C4&property_token=CgoIhpPA4Yf_yZ8JEAE&q=hotels+in+Paris%2C+France",
+      "gps_coordinates": {
+        "latitude": 48.831854,
+        "longitude": 2.3399099999999997
+      },
+      "hotel_class": 4,
+      "thumbnail": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ5mqz_so2ZygAfpCkhJCNZhrN5oy6z6S6sMRUWKJWXgIiVqQ&s=10",
+      "overall_rating": 4,
+      "reviews": 3817,
+      "price": "SAR 812",
+      "extracted_price": 812,
+      "amenities": [
+        "Fitness center",
+        "Wi-Fi"
+      ]
+    },
+    {
+      "name": "Paris Lafayette Hotel",
+      "source": "Hotels.com",
+      "source_icon": "https://www.gstatic.com/travel-hotels/branding/306127930749010778.png",
+      "link": "https://www.google.com/aclk?sa=l&ai=DChsSEwii44_bwLCXAxW5ysIEHXxSGW8YACICCAEQERoCcHY&co=1&gclid=EAIaIQobChMIouOP28CwlwMVucrCBB18UhlvEA0YAiABEgLaL_D_BwE&cid=CAASugHkaIBPmHYQFRXPxj7aZUvkFWHu2XhQ3xaMTSR7umty_dthVrrobSn-vU3B5cFVbk9lk4hGp1hQ6bEyLTXW8UU-1B_0cZr5vABMKmaSulgOnG1FMl6OehkR2u7iUn7GdP843R65WxBQLh0HWsiO6a4a2Luw2FDSCORPxWcNNQ-Q_ZWYPBeOKstJR6lZjKzJFz1IHkKhXzCLUEJMJycnE-0sRJFQ4X2A7D72koU_ex3LIMak2194JU9QOVY&sig=AOD64_0VbwmsjruLAzeN2noDDNjHZxw2Yw&adurl=",
+      "property_token": "CgoI24ahtvTRuZ1xEAE",
+      "serpapi_property_details_link": "https://serpapi.com/search.json?adults=2&check_in_date=2026-11-25&check_out_date=2026-11-30&children=1&children_ages=10&currency=SAR&engine=google_hotels&gl=sa&hl=en&hotel_class=3%2C4&property_token=CgoI24ahtvTRuZ1xEAE&q=hotels+in+Paris%2C+France",
+      "gps_coordinates": {
+        "latitude": 48.876421,
+        "longitude": 2.3488949999999997
+      },
+      "hotel_class": 3,
+      "thumbnail": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ150TeuGsIGkwVf7V46wFt1aEKWN_ZuF7YcA_8kI2_iCksZg&s=10",
+      "overall_rating": 3.8,
+      "reviews": 1296,
+      "price": "SAR 707",
+      "extracted_price": 707,
+      "amenities": [
+        "Free Wi-Fi",
+        "Wi-Fi"
+      ],
+      "free_cancellation": true
+    }
+  ],
+  "properties": [
+    {
+      "type": "hotel",
+      "name": "La Maison Favart",
+      "description": "Posh hotel with refined rooms & suites, many with 18th century-style decor, plus a chic spa area.",
+      "link": "http://www.lamaisonfavart.com/",
+      "property_token": "ChkIxv7X3pyL9fvBARoML2cvMWhjMjd5Y2h2EAE",
+      "serpapi_property_details_link": "https://serpapi.com/search.json?adults=2&check_in_date=2026-11-25&check_out_date=2026-11-30&children=1&children_ages=10&currency=SAR&engine=google_hotels&gl=sa&hl=en&hotel_class=3%2C4&property_token=ChkIxv7X3pyL9fvBARoML2cvMWhjMjd5Y2h2EAE&q=hotels+in+Paris%2C+France",
+      "gps_coordinates": {
+        "latitude": 48.870810399999996,
+        "longitude": 2.3373092
+      },
+      "rate_per_night": {
+        "lowest": "SAR 4,095",
+        "extracted_lowest": 4095,
+        "before_taxes_fees": "SAR 3,658",
+        "extracted_before_taxes_fees": 3658
+      },
+      "total_rate": {
+        "lowest": "SAR 20,476",
+        "extracted_lowest": 20476,
+        "before_taxes_fees": "SAR 18,291",
+        "extracted_before_taxes_fees": 18291
+      },
+      "nearby_places": [
+        {
+          "name": "Louvre Museum",
+          "transportations": [
+            {
+              "type": "Public transport",
+              "duration": "10 min"
+            }
+          ]
+        },
+        {
+          "name": "Aéroport de Paris-Charles de Gaulle",
+          "transportations": [
+            {
+              "type": "Taxi",
+              "duration": "37 min"
+            },
+            {
+              "type": "Public transport",
+              "duration": "51 min"
+            }
+          ]
+        }
+      ],
+      "hotel_class": "4-star tourist hotel",
+      "extracted_hotel_class": 4,
+      "images": [
+        {
+          "thumbnail": "https://lh3.googleusercontent.com/gps-cs-s/ANWiy9Su7CIJEKOnEw1MqQUTD2NApt6AGcf2BzrzxxzSjekG4Ht-Fw4DOiayLelre_qJqSWAzBlx_WeIXAyFOLD7oliO37DZoQDrA3ane0_0dmrKe_fvOw3YRKhhZS56UoSN1O4Hj3tsqA=s287-w287-h192-n-k-no-v1",
+          "original_image": "https://lh3.googleusercontent.com/gps-cs-s/ANWiy9Su7CIJEKOnEw1MqQUTD2NApt6AGcf2BzrzxxzSjekG4Ht-Fw4DOiayLelre_qJqSWAzBlx_WeIXAyFOLD7oliO37DZoQDrA3ane0_0dmrKe_fvOw3YRKhhZS56UoSN1O4Hj3tsqA=s10000"
+        },
+        {
+          "thumbnail": "https://lh3.googleusercontent.com/gps-cs-s/ANWiy9TzTNW_O6MpzbTB9vtFESt-CiBlTHzKUNAF0KPUwCCJADKrDN1822MdDjQSDj_17WmINVmTruKfqkEYCBJm5OJSiuYy-Ex4f6COg_4K-GTVLLGdk2fGe9zNJUAbCifA6w3luteX=s287-w287-h192-n-k-no-v1",
+          "original_image": "https://lh3.googleusercontent.com/gps-cs-s/ANWiy9TzTNW_O6MpzbTB9vtFESt-CiBlTHzKUNAF0KPUwCCJADKrDN1822MdDjQSDj_17WmINVmTruKfqkEYCBJm5OJSiuYy-Ex4f6COg_4K-GTVLLGdk2fGe9zNJUAbCifA6w3luteX=s10000"
+        }
+      ],
+      "overall_rating": 4.7,
+      "reviews": 575,
+      "ratings": [
+        {
+          "stars": 5,
+          "count": 469
+        },
+        {
+          "stars": 4,
+          "count": 75
+        }
+      ],
+      "location_rating": 5.0,
+      "reviews_breakdown": [
+        {
+          "name": "Wellness",
+          "description": "Wellness",
+          "total_mentioned": 24,
+          "positive": 24,
+          "negative": 0,
+          "neutral": 0,
+          "category_token": "sp9xBHica1yRnFiSmp5fVDl5RXhqTk5eanExI5wFAM_4DQY",
+          "serpapi_link": "https://serpapi.com/search.json?category_token=sp9xBHica1yRnFiSmp5fVDl5RXhqTk5eanExI5wFAM_4DQY&engine=google_hotels_reviews&hl=en&property_token=ChkIxv7X3pyL9fvBARoML2cvMWhjMjd5Y2h2EAE"
+        },
+        {
+          "name": "Fitness",
+          "description": "Fitness",
+          "total_mentioned": 26,
+          "positive": 22,
+          "negative": 2,
+          "neutral": 2,
+          "category_token": "PXioD3ica1yRnFiSmp5fVDl5uVtmSV5qcTEjjAEAtXQMIg",
+          "serpapi_link": "https://serpapi.com/search.json?category_token=PXioD3ica1yRnFiSmp5fVDl5uVtmSV5qcTEjjAEAtXQMIg&engine=google_hotels_reviews&hl=en&property_token=ChkIxv7X3pyL9fvBARoML2cvMWhjMjd5Y2h2EAE"
+        }
+      ],
+      "amenities": [
+        "Breakfast",
+        "Free Wi-Fi"
+      ],
+      "eco_certified": true,
+      "serpapi_google_hotels_reviews_link": "https://serpapi.com/search.json?engine=google_hotels_reviews&hl=en&property_token=ChkIxv7X3pyL9fvBARoML2cvMWhjMjd5Y2h2EAE",
+      "serpapi_google_hotels_photos_link": "https://serpapi.com/search.json?engine=google_hotels_photos&property_token=ChkIxv7X3pyL9fvBARoML2cvMWhjMjd5Y2h2EAE"
+    },
+    {
+      "type": "hotel",
+      "name": "Hôtel Louvre Saint-Honoré",
+      "description": "Contemporary hotel near the Louvre Museum offering polished quarters, a 24/7 lounge/bar & a terrace.",
+      "link": "https://www.hotel-louvre-saint-honore.com/",
+      "property_token": "ChcIz_7wiIbr2JV7GgsvZy8xdGY3bHdqdBAB",
+      "serpapi_property_details_link": "https://serpapi.com/search.json?adults=2&check_in_date=2026-11-25&check_out_date=2026-11-30&children=1&children_ages=10&currency=SAR&engine=google_hotels&gl=sa&hl=en&hotel_class=3%2C4&property_token=ChcIz_7wiIbr2JV7GgsvZy8xdGY3bHdqdBAB&q=hotels+in+Paris%2C+France",
+      "gps_coordinates": {
+        "latitude": 48.8617129,
+        "longitude": 2.3406602
+      },
+      "check_in_time": "2:00 PM",
+      "check_out_time": "12:00 PM",
+      "rate_per_night": {
+        "lowest": "SAR 2,047",
+        "extracted_lowest": 2047,
+        "before_taxes_fees": "SAR 1,796",
+        "extracted_before_taxes_fees": 1796
+      },
+      "total_rate": {
+        "lowest": "SAR 10,235",
+        "extracted_lowest": 10235,
+        "before_taxes_fees": "SAR 8,982",
+        "extracted_before_taxes_fees": 8982
+      },
+      "nearby_places": [
+        {
+          "name": "Louvre Museum",
+          "transportations": [
+            {
+              "type": "Walking",
+              "duration": "4 min"
+            }
+          ]
+        },
+        {
+          "name": "Aéroport de Paris-Charles de Gaulle",
+          "transportations": [
+            {
+              "type": "Taxi",
+              "duration": "42 min"
+            },
+            {
+              "type": "Public transport",
+              "duration": "42 min"
+            }
+          ]
+        }
+      ],
+      "hotel_class": "4-star tourist hotel",
+      "extracted_hotel_class": 4,
+      "images": [
+        {
+          "thumbnail": "https://lh3.googleusercontent.com/gps-cs-s/ANWiy9R_1HCE7uIM-MP-Mew7w1FUXgXUfS7uSpYh2zy0Z2nagj9ggS9kAGdzF6J0KMwYtlOqUoeqeFkNM5x0yN8zmiRWgSFTNTOVPoCKVHoXMADCJkKoANIt5Sm5ZhRZJhw_050vZxIe=s287-w287-h192-n-k-no-v1",
+          "original_image": "https://lh3.googleusercontent.com/gps-cs-s/ANWiy9R_1HCE7uIM-MP-Mew7w1FUXgXUfS7uSpYh2zy0Z2nagj9ggS9kAGdzF6J0KMwYtlOqUoeqeFkNM5x0yN8zmiRWgSFTNTOVPoCKVHoXMADCJkKoANIt5Sm5ZhRZJhw_050vZxIe=s10000"
+        },
+        {
+          "thumbnail": "https://lh3.googleusercontent.com/gps-cs-s/ANWiy9TYeK-qdKAqRhaIP-e2tzkh7rSWqEo-W1ibFyk2D8ZLHKKX00Io1IFoSeBCWXsVeS7v56T3WaAi7_FAh-iInuEm3LbkYpnXaE3fHYN9xpA96T2bWJUhZT09sAZCOOmlLzHEhqNn=s287-w287-h192-n-k-no-v1",
+          "original_image": "https://lh3.googleusercontent.com/gps-cs-s/ANWiy9TYeK-qdKAqRhaIP-e2tzkh7rSWqEo-W1ibFyk2D8ZLHKKX00Io1IFoSeBCWXsVeS7v56T3WaAi7_FAh-iInuEm3LbkYpnXaE3fHYN9xpA96T2bWJUhZT09sAZCOOmlLzHEhqNn=s10000"
+        }
+      ],
+      "overall_rating": 4.2,
+      "reviews": 842,
+      "ratings": [
+        {
+          "stars": 5,
+          "count": 504
+        },
+        {
+          "stars": 4,
+          "count": 189
+        }
+      ],
+      "location_rating": 5.0,
+      "reviews_breakdown": [
+        {
+          "name": "Service",
+          "description": "Service",
+          "total_mentioned": 128,
+          "positive": 101,
+          "negative": 23,
+          "neutral": 4,
+          "category_token": "DZ7RYHica1yRnFiSmp5fVDl5eXBqUVlmciojjAEAtX8MDA",
+          "serpapi_link": "https://serpapi.com/search.json?category_token=DZ7RYHica1yRnFiSmp5fVDl5eXBqUVlmciojjAEAtX8MDA&engine=google_hotels_reviews&hl=en&property_token=ChcIz_7wiIbr2JV7GgsvZy8xdGY3bHdqdBAB"
+        },
+        {
+          "name": "Accessibility",
+          "description": "Accessibility",
+          "total_mentioned": 18,
+          "positive": 3,
+          "negative": 12,
+          "neutral": 3,
+          "category_token": "HfRzRXica1yRnFiSmp5fVDl5rWNycmpxcWZSZk5mSSUTKhcAZeYRBw",
+          "serpapi_link": "https://serpapi.com/search.json?category_token=HfRzRXica1yRnFiSmp5fVDl5rWNycmpxcWZSZk5mSSUTKhcAZeYRBw&engine=google_hotels_reviews&hl=en&property_token=ChcIz_7wiIbr2JV7GgsvZy8xdGY3bHdqdBAB"
+        }
+      ],
+      "amenities": [
+        "Breakfast",
+        "Free Wi-Fi"
+      ],
+      "eco_certified": true,
+      "serpapi_google_hotels_reviews_link": "https://serpapi.com/search.json?engine=google_hotels_reviews&hl=en&property_token=ChcIz_7wiIbr2JV7GgsvZy8xdGY3bHdqdBAB",
+      "serpapi_google_hotels_photos_link": "https://serpapi.com/search.json?engine=google_hotels_photos&property_token=ChcIz_7wiIbr2JV7GgsvZy8xdGY3bHdqdBAB"
+    }
+  ],
+  "serpapi_pagination": {
+    "current_from": 1,
+    "current_to": 18,
+    "next_page_token": "CBI=",
+    "next": "https://serpapi.com/search.json?adults=2&check_in_date=2026-11-25&check_out_date=2026-11-30&children=1&children_ages=10&currency=SAR&engine=google_hotels&gl=sa&hl=en&hotel_class=3%2C4&next_page_token=CBI%3D&q=hotels+in+Paris%2C+France"
+  }
+}
