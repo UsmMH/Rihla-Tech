@@ -102,6 +102,7 @@ def complete_chat(
     token_bump: int = 0,
     token_cap: int | None = None,
     parse: Callable[[str], T] | None = None,
+    on_attempt: Callable[[], None] | None = None,
 ) -> str | T:
     """One completion with shared timeout/retry. Raises LLMError on failure."""
     client = get_llm_client(timeout=timeout)
@@ -111,6 +112,8 @@ def complete_chat(
     model = get_llm_model()
     last_error: Exception | None = None
     for attempt in range(LLM_ATTEMPTS):
+        if on_attempt:
+            on_attempt()
         token_budget = max_tokens + token_bump * attempt
         if token_cap is not None:
             token_budget = min(token_cap, token_budget)

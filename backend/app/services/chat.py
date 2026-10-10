@@ -41,7 +41,8 @@ MOCK_REPLY = (
 
 CONFIRM_RE = re.compile(
     r"^(yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|please do|apply|"
-    r"update it|adjust it|sounds good|let'?s do it|that works|confirm|proceed)\b",
+    r"update it|adjust it|sounds good|let'?s do it|that works|confirm|proceed)"
+    r"[\s.!?]*$",
     re.IGNORECASE,
 )
 
@@ -204,12 +205,13 @@ def chat_with_trip(
                     trip=trip_detail,
                 )
             except HTTPException as exc:
-                reply = f"I couldn't apply those changes: {exc.detail}"
+                logger.warning("Chat apply-edit failed: %s", exc.detail)
+                reply = "I couldn't apply those changes. Please try again."
                 _save_message(db, trip_plan_id=trip_plan_id, user_id=user.id, role="assistant", content=reply)
                 return ChatMessageResponse(
                     message=reply,
                     source="mock",
-                    fallback_reason=str(exc.detail),
+                    fallback_reason="Could not apply itinerary edit",
                     proposes_edit=False,
                     apply_instruction=None,
                     itinerary_updated=False,
@@ -315,8 +317,8 @@ Current itinerary:
             trip=None,
         )
     except LLMError as exc:
-        fallback_reason = f"{type(exc).__name__}: {exc}"
         logger.warning("Chat LLM failed: %s", exc)
+        fallback_reason = "LLM request failed"
 
     _save_message(db, trip_plan_id=trip_plan_id, user_id=user.id, role="assistant", content=MOCK_REPLY)
     return ChatMessageResponse(

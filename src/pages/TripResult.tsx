@@ -18,38 +18,73 @@ import { generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, t
 import { shareTrip, unshareTrip } from "@/lib/community";
 import type { AppTab } from "@/lib/navigation";
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+const GENERATE_POLL_MS = 3000;
+const GENERATE_POLL_MAX_MS = 6 * 60 * 1000;
 
 // Backend returns 409 when another request is already generating this trip's
 // itinerary (e.g. user backed out and re-opened the trip before the first
 // attempt finished). Poll until it completes instead of surfacing a dead-end
 // error that would otherwise require a manual retry.
-async function waitForItineraryReady(tripPlanId: number): Promise<TripDetail> {
-  const maxAttempts = 20; // ~60s at 3s intervals, matches expected generation time
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await sleep(3000);
+async function waitForItineraryReady(tripPlanId: number, signal?: AbortSignal): Promise<TripDetail> {
+  const started = Date.now();
+  while (Date.now() - started < GENERATE_POLL_MAX_MS) {
+    await sleep(GENERATE_POLL_MS, signal);
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
     try {
       const trip = await getTrip(tripPlanId);
-      if (tripHasItineraryActivities(trip)) {
+      if (signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      if (tripHasItineraryActivities(trip) || trip.source === "mock") {
         return trip;
       }
+      if (trip.trip_plan.status !== "generating") {
+        throw new ApiError(409, "Itinerary generation stopped before it finished. Please try again.");
+      }
     } catch (err: unknown) {
+      if (isAbortError(err)) {
+        throw err;
+      }
       if (!(err instanceof ApiError) || err.status !== 404) {
         throw err;
       }
+      throw new ApiError(409, "Itinerary generation stopped before it finished. Please try again.");
     }
   }
   throw new ApiError(409, "Itinerary generation is taking longer than expected. Please try again.");
 }
 
-async function generateOrWaitForItinerary(tripPlanId: number): Promise<TripDetail> {
+async function generateOrWaitForItinerary(tripPlanId: number, signal?: AbortSignal): Promise<TripDetail> {
   try {
     return await generateTrip(tripPlanId);
   } catch (err: unknown) {
     if (err instanceof ApiError && err.status === 409) {
-      return waitForItineraryReady(tripPlanId);
+      return waitForItineraryReady(tripPlanId, signal);
     }
     throw err;
   }
@@ -358,8 +393,10 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   const [shareCaption, setShareCaption] = useState("");
   const [shareBusy, setShareBusy] = useState(false);
   const itineraryRetryRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
-  const loadItinerary = useCallback(async (options?: { forceGenerate?: boolean }) => {
+  const loadItinerary = useCallback(async (options?: { forceGenerate?: boolean; signal?: AbortSignal }) => {
+    const signal = options?.signal ?? loadAbortRef.current?.signal;
     setLoading(true);
     setError(null);
     setItineraryError(null);
@@ -370,6 +407,9 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
         setLoadingPhase("fetch");
         try {
           const existing = await getTrip(tripPlanId);
+          if (signal?.aborted) {
+            return;
+          }
           if (tripHasItineraryActivities(existing)) {
             setTrip(existing);
             return;
@@ -382,10 +422,16 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
       }
 
       setLoadingPhase("generate");
-      let result = await generateOrWaitForItinerary(tripPlanId);
+      let result = await generateOrWaitForItinerary(tripPlanId, signal);
+      if (signal?.aborted) {
+        return;
+      }
       if (!tripHasItineraryActivities(result) && itineraryRetryRef.current < 1) {
         itineraryRetryRef.current += 1;
-        result = await generateOrWaitForItinerary(tripPlanId);
+        result = await generateOrWaitForItinerary(tripPlanId, signal);
+        if (signal?.aborted) {
+          return;
+        }
       }
 
       setTrip(result);
@@ -393,9 +439,14 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
         setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
       }
     } catch (err: unknown) {
+      if (isAbortError(err) || signal?.aborted) {
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Failed to load trip");
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }, [tripPlanId]);
 
@@ -404,22 +455,36 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
     setLoading(true);
     setLoadingPhase("generate");
     setError(null);
+    const signal = loadAbortRef.current?.signal;
     try {
-      const result = await generateOrWaitForItinerary(tripPlanId);
+      const result = await generateOrWaitForItinerary(tripPlanId, signal);
+      if (signal?.aborted) {
+        return;
+      }
       setTrip(result);
       if (!tripHasItineraryActivities(result)) {
         setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
       }
     } catch (err: unknown) {
+      if (isAbortError(err) || signal?.aborted) {
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Failed to generate itinerary");
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }, [tripPlanId]);
 
   useEffect(() => {
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
     saveLastTripId(tripPlanId);
-    loadItinerary();
+    void loadItinerary({ signal: ac.signal });
+    return () => {
+      ac.abort();
+    };
   }, [loadItinerary, tripPlanId]);
 
   useEffect(() => {
@@ -485,7 +550,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
         <PlanningBackHeader onBack={onBack} />
         <TripPlanningLoader
           title={loadingPhase === "fetch" ? "Loading your trip..." : "Generating your AI itinerary..."}
-          subtitle={loadingPhase === "generate" ? "This can take up to a minute while we build your personalized plan." : undefined}
+          subtitle={loadingPhase === "generate" ? "Still generating your itinerary. Longer trips can take several minutes." : undefined}
         />
       </div>
     );

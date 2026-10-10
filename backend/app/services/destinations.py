@@ -127,13 +127,13 @@ def suggest_destinations(
             suggestions = _ai_suggestions(trip)
             source = get_llm_provider()
         except Exception as exc:
-            fallback_reason = f"{type(exc).__name__}: {exc}"
             logger.warning(
                 "LLM destination suggestions failed (provider=%s model=%s), using mock: %s",
                 get_llm_provider(),
                 get_llm_model(),
-                fallback_reason,
+                exc,
             )
+            fallback_reason = "LLM request failed"
             suggestions = _mock_suggestions(trip)
     else:
         fallback_reason = "No LLM API key configured for provider " + get_llm_provider()

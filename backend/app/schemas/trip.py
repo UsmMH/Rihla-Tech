@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.quiz import TripPlanPublic
 
@@ -202,12 +202,26 @@ class ChatMessageResponse(BaseModel):
 
 class ConsultHistoryItem(BaseModel):
     role: str
-    content: str
+    content: str = Field(max_length=2000)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def cap_content(cls, value: object) -> object:
+        if isinstance(value, str) and len(value) > 2000:
+            return value[:2000]
+        return value
 
 
 class ConsultChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
-    history: list[ConsultHistoryItem] = Field(default_factory=list)
+    history: list[ConsultHistoryItem] = Field(default_factory=list, max_length=20)
+
+    @field_validator("history", mode="before")
+    @classmethod
+    def cap_history(cls, value: object) -> object:
+        if isinstance(value, list) and len(value) > 20:
+            return value[-20:]
+        return value
 
 
 class ConsultChatResponse(BaseModel):

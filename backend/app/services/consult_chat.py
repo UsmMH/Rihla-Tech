@@ -57,5 +57,5 @@ Do not invent specific itinerary details for their trip — offer general advice
         return ConsultChatResponse(
             message=MOCK_REPLY,
             source="mock",
-            fallback_reason=f"{type(exc).__name__}: {exc}",
+            fallback_reason="LLM request failed",
         )

@@ -1,4 +1,6 @@
 import logging
+import re
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -139,7 +141,7 @@ def _mock_itinerary(trip: TripPlan) -> dict:
     }
 
 
-def _ai_itinerary(trip: TripPlan) -> dict:
+def _ai_itinerary(trip: TripPlan, *, on_attempt: Callable[[], None] | None = None) -> dict:
     num_days = trip_day_count(trip)
     destination = trip.destination or "the chosen destination"
 
@@ -194,7 +196,23 @@ Preferences:
         token_bump=2048,
         token_cap=ITINERARY_MAX_TOKENS,
         parse=lambda content: parse_llm_itinerary_object(content, expected_days=num_days),
+        on_attempt=on_attempt,
     )
+
+
+def _day_number_from_raw(raw_day: dict, fallback: int) -> int:
+    raw = raw_day.get("day", fallback)
+    if isinstance(raw, bool):
+        return fallback
+    if isinstance(raw, int):
+        return raw
+    match = re.search(r"\d+", str(raw))
+    if not match:
+        return fallback
+    try:
+        return int(match.group())
+    except ValueError:
+        return fallback
 
 
 def _persist_itinerary(
@@ -209,10 +227,10 @@ def _persist_itinerary(
     if not isinstance(raw_days, list):
         raw_days = []
 
-    for raw_day in raw_days:
+    for index, raw_day in enumerate(raw_days, start=1):
         if not isinstance(raw_day, dict):
             continue
-        day_number = int(raw_day.get("day", len(places) + 1))
+        day_number = _day_number_from_raw(raw_day, index)
         day_theme = raw_day.get("theme")
         trip_date = _trip_date_for_day(trip, day_number)
         activities = _normalize_activities(raw_day)
@@ -375,6 +393,8 @@ def list_user_trips(db: Session, user: User) -> list[TripPlan]:
 def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailResponse:
     trip = get_owned_trip(db, user, trip_plan_id)
     if not trip.places:
+        if trip.status == "generating":
+            return build_trip_response(trip, [], source="generating", fallback_reason=None)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Itinerary not generated yet",
@@ -402,7 +422,7 @@ def _claim_generation_slot(db: Session, trip: TripPlan) -> None:
             TripPlan.id == trip.id,
             or_(TripPlan.status != "generating", TripPlan.updated_at < stale_cutoff),
         )
-        .values(status="generating")
+        .values(status="generating", updated_at=datetime.now(timezone.utc))
     )
     db.commit()
     if result.rowcount == 0:
@@ -411,6 +431,15 @@ def _claim_generation_slot(db: Session, trip: TripPlan) -> None:
             detail="This trip's itinerary is already being generated. Please wait a moment and try again.",
         )
     db.refresh(trip)
+
+
+def _refresh_generation_lock(db: Session, trip_id: int) -> None:
+    db.execute(
+        update(TripPlan)
+        .where(TripPlan.id == trip_id, TripPlan.status == "generating")
+        .values(updated_at=datetime.now(timezone.utc))
+    )
+    db.commit()
 
 
 def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTripResponse:
@@ -433,17 +462,20 @@ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTr
 
         if llm_configured():
             try:
-                payload = _ai_itinerary(trip)
+                payload = _ai_itinerary(
+                    trip,
+                    on_attempt=lambda: _refresh_generation_lock(db, trip.id),
+                )
                 source = get_llm_provider()
                 tags_override = payload.get("tags") if isinstance(payload.get("tags"), str) else None
             except Exception as exc:
-                fallback_reason = f"{type(exc).__name__}: {exc}"
                 logger.warning(
                     "LLM itinerary generation failed (provider=%s model=%s), using mock: %s",
                     get_llm_provider(),
                     get_llm_model(),
-                    fallback_reason,
+                    exc,
                 )
+                fallback_reason = "LLM request failed"
                 payload = _mock_itinerary(trip)
                 tags_override = payload.get("tags")
         else:
