@@ -18,23 +18,13 @@ from app.schemas.community import (
     ToggleSaveResponse,
     ToggleVoteResponse,
 )
-from app.services.itinerary import _build_response
+from app.services.itinerary import build_trip_response, get_owned_trip, trip_day_count
 
 
 def _author_display(user: User) -> CommunityAuthor:
     last_initial = user.last_name[:1].upper() if user.last_name else ""
     display = f"{user.first_name} {last_initial}.".strip()
     return CommunityAuthor(id=user.id, display_name=display)
-
-
-def _trip_day_count(trip: TripPlan) -> int:
-    if trip.start_date and trip.end_date and trip.end_date >= trip.start_date:
-        days = (trip.end_date - trip.start_date).days + 1
-        return max(1, min(days, 14))
-    places = trip.places or []
-    if places:
-        return max(p.day_number for p in places)
-    return 1
 
 
 def _counts_for_trip(db: Session, trip_plan_id: int) -> tuple[int, int, int]:
@@ -78,18 +68,6 @@ def _get_shared_trip(db: Session, trip_plan_id: int) -> TripPlan:
     return trip
 
 
-def _get_owned_trip(db: Session, user: User, trip_plan_id: int) -> TripPlan:
-    trip = (
-        db.query(TripPlan)
-        .options(joinedload(TripPlan.places))
-        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == user.id)
-        .first()
-    )
-    if trip is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
-    return trip
-
-
 def _to_feed_item(
     db: Session,
     trip: TripPlan,
@@ -105,7 +83,7 @@ def _to_feed_item(
         end_date=trip.end_date,
         theme=trip.theme,
         trip_purpose=trip.trip_purpose,
-        num_days=_trip_day_count(trip),
+        num_days=trip_day_count(trip, fallback=1, from_places=True),
         activity_count=len(trip.places or []),
         share_caption=trip.share_caption,
         shared_at=trip.shared_at or trip.updated_at,
@@ -147,7 +125,7 @@ def list_saved(db: Session, user: User) -> CommunityFeedResponse:
 
 
 def share_trip(db: Session, user: User, trip_plan_id: int, caption: str | None) -> ShareTripResponse:
-    trip = _get_owned_trip(db, user, trip_plan_id)
+    trip = get_owned_trip(db, user, trip_plan_id)
     if not trip.places:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -167,7 +145,7 @@ def share_trip(db: Session, user: User, trip_plan_id: int, caption: str | None) 
 
 
 def unshare_trip(db: Session, user: User, trip_plan_id: int) -> ShareTripResponse:
-    trip = _get_owned_trip(db, user, trip_plan_id)
+    trip = get_owned_trip(db, user, trip_plan_id)
     trip.is_shared = False
     trip.share_caption = None
     trip.shared_at = None
@@ -226,7 +204,7 @@ def get_shared_trip_detail(db: Session, user: User, trip_plan_id: int) -> Commun
 
     places = list(trip.places)
     source = trip.itinerary_source or "generated"
-    detail = _build_response(trip, places, source=source, fallback_reason=None)
+    detail = build_trip_response(trip, places, source=source, fallback_reason=None)
     vote_count, save_count, comment_count = _counts_for_trip(db, trip_plan_id)
     viewer_voted, viewer_saved = _viewer_flags(db, trip_plan_id, user)
 

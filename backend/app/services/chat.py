@@ -3,14 +3,15 @@ import logging
 import re
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.models.chat_message import ChatMessage
 from app.models.trip_plan import TripPlan
 from app.models.user import User
 from app.schemas.trip import ChatMessagePublic, ChatMessageResponse
 from app.services.apply_edit import apply_itinerary_edit
-from app.services.destinations import _trip_context
+from app.services.destinations import trip_context
+from app.services.itinerary import get_owned_trip
 from app.services.llm import CHAT_TIMEOUT, LLMError, complete_chat, get_llm_provider, llm_configured
 from app.services.llm_json import parse_llm_json_object
 
@@ -46,14 +47,7 @@ CONFIRM_RE = re.compile(
 
 
 def _get_trip(db: Session, user: User, trip_plan_id: int) -> TripPlan:
-    trip = (
-        db.query(TripPlan)
-        .options(joinedload(TripPlan.places))
-        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == user.id)
-        .first()
-    )
-    if trip is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
+    trip = get_owned_trip(db, user, trip_plan_id)
     if not trip.places:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -270,7 +264,7 @@ Set proposes_edit to true and apply_instruction to a clear, self-contained edit 
 apply_instruction must be detailed enough to execute without prior chat context — include day number, current activity name, and the replacement.
 {pending_context}
 Trip preferences:
-{_trip_context(trip)}
+{trip_context(trip)}
 
 Current itinerary:
 {_itinerary_summary(trip)}

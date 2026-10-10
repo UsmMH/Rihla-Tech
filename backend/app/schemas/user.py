@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, EmailStr, Field, field_validator
 
 from app.services.auth import (
     PASSWORD_MAX_LENGTH,
@@ -8,6 +9,15 @@ from app.services.auth import (
     validate_email_format,
     validate_password_format,
 )
+
+
+def _normalize_email(value: object) -> object:
+    if isinstance(value, str):
+        return validate_email_format(value)
+    return value
+
+
+NormalizedEmail = Annotated[EmailStr, BeforeValidator(_normalize_email)]
 
 
 class UserPublic(BaseModel):
@@ -24,18 +34,11 @@ class UserPublic(BaseModel):
 
 
 class UserRegister(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     phone_num: str | None = Field(default=None, max_length=30)
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_register_email(cls, value: str) -> str:
-        if isinstance(value, str):
-            return validate_email_format(value)
-        return value
 
     @field_validator("password")
     @classmethod
@@ -51,15 +54,8 @@ class UserRegister(BaseModel):
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_login_email(cls, value: str) -> str:
-        if isinstance(value, str):
-            return validate_email_format(value)
-        return value
 
 
 class RegisterAcceptedResponse(BaseModel):
@@ -68,15 +64,8 @@ class RegisterAcceptedResponse(BaseModel):
 
 
 class EmailVerificationRequest(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     code: str = Field(min_length=6, max_length=6)
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_verify_email(cls, value: str) -> str:
-        if isinstance(value, str):
-            return validate_email_format(value)
-        return value
 
     @field_validator("code")
     @classmethod
@@ -88,11 +77,4 @@ class EmailVerificationRequest(BaseModel):
 
 
 class ResendCodeRequest(BaseModel):
-    email: EmailStr
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_resend_email(cls, value: str) -> str:
-        if isinstance(value, str):
-            return validate_email_format(value)
-        return value
+    email: NormalizedEmail

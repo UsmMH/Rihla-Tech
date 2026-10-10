@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from collections.abc import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen
@@ -269,7 +270,13 @@ def search_airports(query: str, *, limit: int = 8) -> list[dict]:
     seen_keys = {_airport_dedupe_key(item) for item in results}
 
     if len(results) < limit:
-        for item in _searchbox_airport_results(cleaned, limit=limit):
+        for item in _searchbox_forward(
+            cleaned,
+            poi_category="airport",
+            normalize=_normalize_searchbox_airport,
+            limit=limit,
+            log_label="airport",
+        ):
             key = _airport_dedupe_key(item)
             if key in seen_keys:
                 continue
@@ -284,8 +291,16 @@ def search_airports(query: str, *, limit: int = 8) -> list[dict]:
     return results[:limit]
 
 
-def _searchbox_airport_results(query: str, *, limit: int = 8) -> list[dict]:
-    """Mapbox Search Box airport POI fallback when Duffel is unavailable."""
+def _searchbox_forward(
+    query: str,
+    *,
+    poi_category: str,
+    normalize: Callable[[dict], dict | None],
+    limit: int = 8,
+    proximity: tuple[float, float] | None = None,
+    country_code: str | None = None,
+    log_label: str = "search",
+) -> list[dict]:
     if not mapbox_configured() or not query.strip():
         return []
 
@@ -293,19 +308,24 @@ def _searchbox_airport_results(query: str, *, limit: int = 8) -> list[dict]:
     encoded = quote(query.strip(), safe="")
     url = (
         f"{MAPBOX_SEARCHBOX_URL}?q={encoded}"
-        f"&limit={limit}&types=poi&poi_category=airport&access_token={token}"
+        f"&limit={limit}&types=poi&poi_category={poi_category}&access_token={token}"
     )
+    if proximity:
+        lng, lat = proximity
+        url += f"&proximity={lng},{lat}"
+    if country_code:
+        url += f"&country={country_code.lower()}"
 
     try:
         with urlopen(url, timeout=12) as response:
             payload = json.loads(response.read().decode())
     except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
-        logger.warning("Mapbox airport search failed: %s", exc)
+        logger.warning("Mapbox %s search failed: %s", log_label, exc)
         return []
 
     results: list[dict] = []
     for feature in payload.get("features", []):
-        item = _normalize_searchbox_airport(feature)
+        item = normalize(feature)
         if item:
             results.append(item)
     return results
@@ -377,42 +397,6 @@ def _normalize_searchbox_lodging(feature: dict) -> dict | None:
     }
 
 
-def _searchbox_lodging_results(
-    query: str,
-    *,
-    proximity: tuple[float, float],
-    country_code: str | None = None,
-    limit: int = 8,
-) -> list[dict]:
-    """Mapbox Search Box lodging POIs near a destination center."""
-    if not mapbox_configured() or not query.strip():
-        return []
-
-    lng, lat = proximity
-    token = settings.mapbox_access_token
-    encoded = quote(query.strip(), safe="")
-    url = (
-        f"{MAPBOX_SEARCHBOX_URL}?q={encoded}"
-        f"&proximity={lng},{lat}&limit={limit}&types=poi&poi_category=hotel&access_token={token}"
-    )
-    if country_code:
-        url += f"&country={country_code.lower()}"
-
-    try:
-        with urlopen(url, timeout=12) as response:
-            payload = json.loads(response.read().decode())
-    except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
-        logger.warning("Mapbox lodging search failed: %s", exc)
-        return []
-
-    results: list[dict] = []
-    for feature in payload.get("features", []):
-        item = _normalize_searchbox_lodging(feature)
-        if item:
-            results.append(item)
-    return results
-
-
 def search_lodging_hotels(destination: str, *, limit: int = 6) -> list[dict]:
     """Return lodging POIs for a trip destination. Empty list on failure."""
     cleaned = destination.strip()
@@ -433,11 +417,14 @@ def search_lodging_hotels(destination: str, *, limit: int = 6) -> list[dict]:
     for query in queries:
         if len(results) >= limit:
             break
-        batch = _searchbox_lodging_results(
+        batch = _searchbox_forward(
             query,
+            poi_category="hotel",
+            normalize=_normalize_searchbox_lodging,
             proximity=dest_center,
             country_code=country_code,
             limit=limit,
+            log_label="lodging",
         )
         for item in batch:
             key = item["name"].strip().lower()

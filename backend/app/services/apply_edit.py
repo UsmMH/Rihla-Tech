@@ -1,11 +1,11 @@
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.models.trip_plan import TripPlan
 from app.models.user import User
 from app.schemas.trip import TripDetailResponse
-from app.services.destinations import _trip_context
-from app.services.itinerary import get_trip_detail
+from app.services.destinations import trip_context
+from app.services.itinerary import get_owned_trip, get_trip_detail
 from app.services.llm import ITINERARY_TIMEOUT, LLMError, complete_chat, llm_configured
 from app.services.llm_json import LLM_MAX_TOKENS, parse_llm_json_object
 
@@ -29,15 +29,7 @@ def apply_itinerary_edit(
     trip_plan_id: int,
     instruction: str,
 ) -> TripDetailResponse:
-    trip = (
-        db.query(TripPlan)
-        .options(joinedload(TripPlan.places))
-        .filter(TripPlan.id == trip_plan_id, TripPlan.user_id == user.id)
-        .first()
-    )
-    if trip is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip plan not found")
-
+    trip = get_owned_trip(db, user, trip_plan_id)
     if not trip.places:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -79,7 +71,7 @@ Rules:
 - No markdown outside JSON.
 
 Trip preferences:
-{_trip_context(trip)}
+{trip_context(trip)}
 
 Current places (use place_id):
 {_itinerary_with_ids(trip)}

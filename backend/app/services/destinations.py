@@ -31,7 +31,7 @@ MOCK_SUGGESTIONS = [
 ]
 
 
-def _trip_context(trip: TripPlan) -> str:
+def trip_context(trip: TripPlan) -> str:
     pace, interests = decode_theme_preferences(trip.theme)
     interest_label = ", ".join(interests) if interests else "mixed"
     parts = [
@@ -82,7 +82,7 @@ Each blurb must be ONE short sentence (max 100 characters).
 Do not include markdown, code fences, or any text outside the JSON array.
 
 Preferences:
-{_trip_context(trip)}
+{trip_context(trip)}
 """
 
     def parse_suggestions(content: str) -> list[DestinationSuggestion]:

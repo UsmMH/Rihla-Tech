@@ -14,86 +14,27 @@ from app.models.community import TripComment, TripSave, TripVote  # noqa: F401
 from app.routers import admin, auth, chat, community, health, places, quiz, trips
 
 
+_SCHEMA_COLUMNS = (
+    ("trip_plans", "itinerary_source", "VARCHAR(30)"),
+    ("places", "map_search", "VARCHAR(255)"),
+    ("places", "location_hint", "VARCHAR(255)"),
+    ("places", "mapbox_id", "VARCHAR(120)"),
+    ("places", "location_confirmed", "BOOLEAN DEFAULT FALSE"),
+    ("trip_plans", "is_shared", "BOOLEAN DEFAULT FALSE"),
+    ("trip_plans", "share_caption", "VARCHAR(500)"),
+    ("trip_plans", "shared_at", "TIMESTAMPTZ"),
+    ("users", "is_verified", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("users", "verification_code_hash", "VARCHAR(64)"),
+    ("users", "verification_code_expires_at", "TIMESTAMPTZ"),
+    ("users", "verification_attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "verification_last_sent_at", "TIMESTAMPTZ"),
+)
+
+
 def _ensure_schema_patches() -> None:
     with engine.begin() as conn:
-        conn.execute(
-            text(
-                "ALTER TABLE trip_plans "
-                "ADD COLUMN IF NOT EXISTS itinerary_source VARCHAR(30)"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE places "
-                "ADD COLUMN IF NOT EXISTS map_search VARCHAR(255)"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE places "
-                "ADD COLUMN IF NOT EXISTS location_hint VARCHAR(255)"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE places "
-                "ADD COLUMN IF NOT EXISTS mapbox_id VARCHAR(120)"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE places "
-                "ADD COLUMN IF NOT EXISTS location_confirmed BOOLEAN DEFAULT FALSE"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE trip_plans "
-                "ADD COLUMN IF NOT EXISTS is_shared BOOLEAN DEFAULT FALSE"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE trip_plans "
-                "ADD COLUMN IF NOT EXISTS share_caption VARCHAR(500)"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE trip_plans "
-                "ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE users "
-                "ADD COLUMN IF NOT EXISTS is_verified BOOLEAN NOT NULL DEFAULT FALSE"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE users "
-                "ADD COLUMN IF NOT EXISTS verification_code_hash VARCHAR(64)"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE users "
-                "ADD COLUMN IF NOT EXISTS verification_code_expires_at TIMESTAMPTZ"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE users "
-                "ADD COLUMN IF NOT EXISTS verification_attempts INTEGER NOT NULL DEFAULT 0"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE users "
-                "ADD COLUMN IF NOT EXISTS verification_last_sent_at TIMESTAMPTZ"
-            )
-        )
+        for table, column, spec in _SCHEMA_COLUMNS:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {spec}"))
         # Legacy accounts (pre email-verification): no pending code — keep them able to log in.
         conn.execute(
             text(

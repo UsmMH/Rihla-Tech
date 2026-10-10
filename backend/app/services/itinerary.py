@@ -17,7 +17,7 @@ from app.schemas.trip import (
     TripStatPublic,
 )
 from app.services.geocoding import mapbox_configured
-from app.services.destinations import _trip_context
+from app.services.destinations import trip_context
 from app.services.llm import ITINERARY_TIMEOUT, complete_chat, get_llm_model, get_llm_provider, llm_configured
 from app.services.llm_json import (
     ITINERARY_MAX_TOKENS,
@@ -38,11 +38,15 @@ TIME_SLOT_LABELS = {
 MOCK_DAY_THEMES = ("Arrival & First Impressions", "Local Culture & Cuisine", "Highlights & Farewell")
 
 
-def _trip_day_count(trip: TripPlan) -> int:
+def trip_day_count(trip: TripPlan, *, fallback: int = 3, from_places: bool = False) -> int:
     if trip.start_date and trip.end_date and trip.end_date >= trip.start_date:
         days = (trip.end_date - trip.start_date).days + 1
         return max(1, min(days, 14))
-    return 3
+    if from_places:
+        places = trip.places or []
+        if places:
+            return max(p.day_number for p in places)
+    return fallback
 
 
 def _trip_date_for_day(trip: TripPlan, day_number: int) -> date | None:
@@ -97,7 +101,7 @@ def _normalize_activities(raw_day: dict) -> list[dict]:
 
 def _mock_itinerary(trip: TripPlan) -> dict:
     destination = trip.destination or "your destination"
-    num_days = _trip_day_count(trip)
+    num_days = trip_day_count(trip)
     theme = trip.theme or "mixed"
     purpose = trip.trip_purpose or "explore"
 
@@ -136,7 +140,7 @@ def _mock_itinerary(trip: TripPlan) -> dict:
 
 
 def _ai_itinerary(trip: TripPlan) -> dict:
-    num_days = _trip_day_count(trip)
+    num_days = trip_day_count(trip)
     destination = trip.destination or "the chosen destination"
 
     prompt = f"""Create a {num_days}-day travel itinerary for {destination}.
@@ -176,7 +180,7 @@ Rules:
 - No markdown, code fences, or text outside the JSON object.
 
 Preferences:
-{_trip_context(trip)}
+{trip_context(trip)}
 """
 
     return complete_chat(
@@ -253,7 +257,7 @@ def _persist_itinerary(
     return places
 
 
-def _build_response(
+def build_trip_response(
     trip: TripPlan,
     places: list[Place],
     source: str,
@@ -310,7 +314,7 @@ def _build_response(
         if p.latitude is not None and p.longitude is not None
     ]
 
-    num_days = len(itinerary) or _trip_day_count(trip)
+    num_days = len(itinerary) or trip_day_count(trip)
     return TripDetailResponse(
         trip_plan=TripPlanPublic.model_validate(trip),
         destination=trip.destination or "Your trip",
@@ -328,7 +332,7 @@ def _build_response(
     )
 
 
-def _get_trip_for_user(db: Session, user: User, trip_plan_id: int) -> TripPlan:
+def get_owned_trip(db: Session, user: User, trip_plan_id: int) -> TripPlan:
     trip = (
         db.query(TripPlan)
         .options(joinedload(TripPlan.places))
@@ -369,7 +373,7 @@ def list_user_trips(db: Session, user: User) -> list[TripPlan]:
 
 
 def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailResponse:
-    trip = _get_trip_for_user(db, user, trip_plan_id)
+    trip = get_owned_trip(db, user, trip_plan_id)
     if not trip.places:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -378,7 +382,7 @@ def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailRes
 
     places = list(trip.places)
     source = trip.itinerary_source or "generated"
-    return _build_response(trip, places, source=source, fallback_reason=None)
+    return build_trip_response(trip, places, source=source, fallback_reason=None)
 
 
 # How long a trip can sit in "generating" before we assume the request that
@@ -410,7 +414,7 @@ def _claim_generation_slot(db: Session, trip: TripPlan) -> None:
 
 
 def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTripResponse:
-    trip = _get_trip_for_user(db, user, trip_plan_id)
+    trip = get_owned_trip(db, user, trip_plan_id)
 
     if not trip.destination:
         raise HTTPException(
@@ -464,5 +468,5 @@ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTr
     places = list(trip.places)
 
     return GenerateTripResponse(
-        **_build_response(trip, places, source, fallback_reason, tags_override).model_dump()
+        **build_trip_response(trip, places, source, fallback_reason, tags_override).model_dump()
     )

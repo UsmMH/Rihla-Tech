@@ -17,7 +17,7 @@ from app.config import settings
 from app.models.trip_plan import TripPlan
 from app.models.user import User
 from app.schemas.trip import FlightOfferPublic, FlightSegmentPublic, FlightsResponse
-from app.services.itinerary import _get_trip_for_user
+from app.services.itinerary import get_owned_trip
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +415,7 @@ def _search_duffel(
 
 
 def search_flights(db: Session, user: User, trip_plan_id: int) -> FlightsResponse:
-    trip = _get_trip_for_user(db, user, trip_plan_id)
+    trip = get_owned_trip(db, user, trip_plan_id)
     if not trip.include_flights:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Flights not requested for this trip")
 

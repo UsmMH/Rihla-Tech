@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.trip import HotelOptionPublic, HotelsResponse
 from app.services.geocoding import search_lodging_hotels
-from app.services.itinerary import _get_trip_for_user
+from app.services.itinerary import get_owned_trip
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +241,7 @@ def _mapbox_hotels(
 
 
 def search_hotels(db: Session, user: User, trip_plan_id: int) -> HotelsResponse:
-    trip = _get_trip_for_user(db, user, trip_plan_id)
+    trip = get_owned_trip(db, user, trip_plan_id)
     if not trip.include_hotels:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Hotels not requested for this trip")
 
