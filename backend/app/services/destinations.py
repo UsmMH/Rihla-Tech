@@ -119,6 +119,10 @@ def suggest_destinations(
             detail="Destination is already known for this trip",
         )
 
+    from app.services.itinerary import reject_if_generation_in_progress
+
+    reject_if_generation_in_progress(trip)
+
     source = "mock"
     fallback_reason: str | None = None
 
@@ -162,6 +166,10 @@ def select_destination(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Trip plan not found",
         )
+
+    from app.services.itinerary import reject_if_generation_in_progress
+
+    reject_if_generation_in_progress(trip)
 
     trip.destination = destination.strip()
     trip.destination_known = True

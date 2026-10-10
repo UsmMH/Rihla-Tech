@@ -134,6 +134,9 @@ def submit_quiz_answers(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Trip plan not found",
             )
+        from app.services.itinerary import reject_if_generation_in_progress
+
+        reject_if_generation_in_progress(trip)
     else:
         trip = TripPlan(user_id=user.id)
         db.add(trip)

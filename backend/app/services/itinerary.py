@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, or_, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.place import Place
@@ -220,6 +220,7 @@ def _persist_itinerary(
     trip: TripPlan,
     payload: dict,
 ) -> list[Place]:
+    db.execute(select(TripPlan.id).where(TripPlan.id == trip.id).with_for_update())
     db.execute(delete(Place).where(Place.trip_plan_id == trip.id))
 
     places: list[Place] = []
@@ -409,6 +410,50 @@ def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailRes
 # claimed it crashed/timed out and allow a new attempt to reclaim it.
 GENERATION_LOCK_TIMEOUT = timedelta(minutes=3)
 
+_GENERATION_BUSY_DETAIL = (
+    "This trip's itinerary is already being generated. Please wait a moment and try again."
+)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def generation_lock_active(trip: TripPlan) -> bool:
+    if trip.status != "generating":
+        return False
+    updated = _as_utc(trip.updated_at)
+    if updated is None:
+        return True
+    return _utc_now() - updated < GENERATION_LOCK_TIMEOUT
+
+
+def reject_if_generation_in_progress(trip: TripPlan) -> None:
+    if generation_lock_active(trip):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_GENERATION_BUSY_DETAIL,
+        )
+
+
+def status_before_generation(trip: TripPlan, status_when_claimed: str) -> str:
+    """Restore target after a failed run (never leave status as generating)."""
+    if status_when_claimed != "generating":
+        return status_when_claimed
+    if (trip.destination or "").strip():
+        return "destination_selected"
+    if trip.theme:
+        return "preferences_complete"
+    return "quiz_complete"
+
 
 def _claim_generation_slot(db: Session, trip: TripPlan) -> None:
     """Atomically flip the trip to status="generating" so a second concurrent
@@ -428,7 +473,7 @@ def _claim_generation_slot(db: Session, trip: TripPlan) -> None:
     if result.rowcount == 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This trip's itinerary is already being generated. Please wait a moment and try again.",
+            detail=_GENERATION_BUSY_DETAIL,
         )
     db.refresh(trip)
 
@@ -451,7 +496,7 @@ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTr
             detail="Trip destination is required before generating an itinerary",
         )
 
-    previous_status = trip.status
+    status_when_claimed = trip.status
     _claim_generation_slot(db, trip)
 
     try:
@@ -492,7 +537,8 @@ def generate_itinerary(db: Session, user: User, trip_plan_id: int) -> GenerateTr
         # Release the "generating" lock immediately instead of making the next
         # attempt wait out the full staleness timeout.
         db.rollback()
-        db.execute(update(TripPlan).where(TripPlan.id == trip.id).values(status=previous_status))
+        restore_status = status_before_generation(trip, status_when_claimed)
+        db.execute(update(TripPlan).where(TripPlan.id == trip.id).values(status=restore_status))
         db.commit()
         raise
 
