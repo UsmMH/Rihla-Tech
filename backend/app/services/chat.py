@@ -12,11 +12,27 @@ from app.models.user import User
 from app.schemas.trip import ChatMessagePublic, ChatMessageResponse
 from app.services.apply_edit import apply_itinerary_edit
 from app.services.destinations import _trip_context
-from app.services.edit import _itinerary_summary
 from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
 from app.services.llm_json import parse_llm_json_object
 
 logger = logging.getLogger(__name__)
+
+
+def _itinerary_summary(trip: TripPlan) -> str:
+    if not trip.places:
+        return "No itinerary generated yet."
+    lines: list[str] = []
+    current_day: int | None = None
+    for place in trip.places:
+        if place.day_number != current_day:
+            current_day = place.day_number
+            theme = place.day_theme or f"Day {current_day}"
+            lines.append(f"Day {current_day} ({theme}):")
+        lines.append(
+            f"  - {place.time_slot} [id={place.id}]: {place.name} ({place.activity_type or 'Activity'})"
+        )
+    return "\n".join(lines)
+
 
 MOCK_REPLY = (
     "I'd be happy to help adjust your itinerary! Try asking about specific days, "

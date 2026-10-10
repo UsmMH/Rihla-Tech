@@ -4,18 +4,10 @@ import time
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
-from app.models.place import Place
 from app.models.trip_plan import TripPlan
 from app.models.user import User
 from app.schemas.trip import TripDetailResponse
 from app.services.destinations import _trip_context
-from app.services.geocoding import (
-    _coords_from_activity_payload,
-    _destination_context,
-    _resolve_destination_center,
-    enrich_trip_places,
-    resolve_place_coordinates,
-)
 from app.services.itinerary import get_trip_detail
 from app.services.llm import get_llm_client, get_llm_model, llm_configured
 from app.services.llm_json import LLM_MAX_TOKENS, is_retryable_llm_error, parse_llm_json_object
@@ -82,8 +74,6 @@ Return JSON only:
       "name": "Official Venue Name",
       "map_search": "Official Venue Name",
       "location_hint": "neighborhood",
-      "latitude": 30.0444,
-      "longitude": 31.2357,
       "description": "1-2 sentences",
       "activity_type": "Culture|Food|Nature|Adventure|Relaxation|Shopping|Nightlife|Scenic",
       "duration": "e.g. 2 hrs"
@@ -95,7 +85,7 @@ Rules:
 - Only include places that should change. Use exact place_id values from the list below.
 - name and map_search must be the real venue or landmark name (not generic labels like "Food Tour").
 - Keep venues realistic and mappable in {destination}.
-- If swapping an activity, update that place_id's fields including coordinates.
+- If swapping an activity, update that place_id's fields.
 - No markdown outside JSON.
 
 Trip preferences:
@@ -142,11 +132,6 @@ Current places (use place_id):
         )
 
     places_by_id = {place.id: place for place in trip.places}
-    dest_center: tuple[float, float] | None = None
-    dest_context: dict = {}
-    if trip.destination:
-        dest_context = _destination_context(trip.destination)
-        dest_center, dest_context = _resolve_destination_center(trip.destination, dest_context)
 
     changed = 0
     for item in updates:
@@ -186,24 +171,6 @@ Current places (use place_id):
         duration = item.get("duration")
         if duration is not None:
             place.duration = str(duration).strip() or place.duration
-
-        llm_coords = _coords_from_activity_payload(item, dest_center)
-        search_name = (place.map_search or place.name).strip()
-        coords: tuple[float, float] | None = None
-        if dest_center is not None:
-            coords = resolve_place_coordinates(
-                search_name,
-                location_hint=place.location_hint,
-                destination=trip.destination or "",
-                dest_context=dest_context,
-                dest_center=dest_center,
-                llm_coords=llm_coords,
-            )
-        if coords:
-            place.latitude, place.longitude = coords
-        else:
-            place.latitude = None
-            place.longitude = None
         changed += 1
 
     if changed == 0:
@@ -213,5 +180,4 @@ Current places (use place_id):
         )
 
     db.commit()
-    enrich_trip_places(db, trip, force=True)
     return get_trip_detail(db, user, trip_plan_id)

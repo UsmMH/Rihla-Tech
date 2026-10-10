@@ -17,15 +17,7 @@ from app.schemas.trip import (
     TripDetailResponse,
     TripStatPublic,
 )
-from app.services.geocoding import (
-    _coords_from_activity_payload,
-    _destination_context,
-    _resolve_destination_center,
-    enrich_trip_places,
-    mapbox_configured,
-    resolve_place_coordinates,
-    trip_needs_geocoding,
-)
+from app.services.geocoding import mapbox_configured
 from app.services.destinations import _trip_context
 from app.services.llm import get_llm_client, get_llm_model, get_llm_provider, llm_configured
 from app.services.llm_json import (
@@ -168,8 +160,6 @@ Return JSON only with this shape:
           "name": "Perdana Botanical Garden",
           "map_search": "Perdana Botanical Garden",
           "location_hint": "neighborhood or district in {destination}",
-          "latitude": 30.0444,
-          "longitude": 31.2357,
           "description": "Stroll through the lake and tropical plant collections.",
           "type": "Culture|Food|Nature|Adventure|Relaxation|Shopping|Nightlife|Scenic",
           "duration": "e.g. 2 hrs"
@@ -185,7 +175,6 @@ Rules:
 - name MUST be the real venue or landmark name (this is shown as the card title). Examples: "Perdana Botanical Garden", "Sultan Abu Bakar State Mosque" — NOT "Botanical Walk", "Cultural Immersion", or "Sunset Views".
 - map_search must match name (same official venue name used for the map pin).
 - description explains what the traveler does or sees at that venue (1-2 sentences).
-- latitude and longitude are REQUIRED: accurate coordinates for the venue (decimal degrees, WGS84).
 - Do NOT use vague venue names like "Nile cruise", "walking tour", "local food market", or "sunset viewpoint".
 - For boats or cruises, name must be a specific dock, pier, or operator in {destination}.
 - location_hint should name the neighborhood or district within {destination}.
@@ -235,12 +224,6 @@ def _persist_itinerary(
 ) -> list[Place]:
     db.execute(delete(Place).where(Place.trip_plan_id == trip.id))
 
-    dest_center: tuple[float, float] | None = None
-    dest_context: dict = {}
-    if trip.destination and mapbox_configured():
-        dest_context = _destination_context(trip.destination)
-        dest_center, dest_context = _resolve_destination_center(trip.destination, dest_context)
-
     places: list[Place] = []
     raw_days = payload.get("days", [])
     if not isinstance(raw_days, list):
@@ -271,18 +254,6 @@ def _persist_itinerary(
             if not map_search:
                 map_search = name
             location_hint = str(activity.get("location_hint", "")).strip() or None
-            llm_coords = _coords_from_activity_payload(activity, dest_center)
-
-            coords: tuple[float, float] | None = None
-            if dest_center is not None:
-                coords = resolve_place_coordinates(
-                    map_search,
-                    location_hint=location_hint,
-                    destination=trip.destination or "",
-                    dest_context=dest_context,
-                    dest_center=dest_center,
-                    llm_coords=llm_coords,
-                )
 
             place = Place(
                 trip_plan_id=trip.id,
@@ -294,8 +265,8 @@ def _persist_itinerary(
                 name=name,
                 map_search=map_search,
                 location_hint=location_hint,
-                latitude=coords[0] if coords else None,
-                longitude=coords[1] if coords else None,
+                latitude=None,
+                longitude=None,
                 description=str(activity.get("description", "")).strip() or None,
                 activity_type=str(activity.get("type", "Activity")).strip() or None,
                 duration=str(activity.get("duration", "1 hr")).strip() or None,
@@ -421,36 +392,6 @@ def list_user_trips(db: Session, user: User) -> list[TripPlan]:
     )
 
 
-def update_place_location(
-    db: Session,
-    user: User,
-    trip_plan_id: int,
-    place_id: int,
-    *,
-    label: str,
-    latitude: float,
-    longitude: float,
-    mapbox_id: str | None = None,
-) -> TripDetailResponse:
-    trip = _get_trip_for_user(db, user, trip_plan_id)
-    place = next((p for p in trip.places if p.id == place_id), None)
-    if place is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Place not found")
-
-    place.latitude = latitude
-    place.longitude = longitude
-    place.name = label.strip()
-    place.map_search = label.strip()
-    place.mapbox_id = mapbox_id
-    place.location_confirmed = True
-    db.commit()
-    db.refresh(trip)
-
-    places = list(trip.places)
-    source = trip.itinerary_source or "generated"
-    return _build_response(trip, places, source=source, fallback_reason=None)
-
-
 def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailResponse:
     trip = _get_trip_for_user(db, user, trip_plan_id)
     if not trip.places:
@@ -460,11 +401,6 @@ def get_trip_detail(db: Session, user: User, trip_plan_id: int) -> TripDetailRes
         )
 
     places = list(trip.places)
-    if mapbox_configured() and trip_needs_geocoding(trip, places):
-        enrich_trip_places(db, trip, places)
-        db.refresh(trip)
-        places = list(trip.places)
-
     source = trip.itinerary_source or "generated"
     return _build_response(trip, places, source=source, fallback_reason=None)
 

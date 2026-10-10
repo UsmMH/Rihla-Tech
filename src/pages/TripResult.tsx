@@ -14,7 +14,7 @@ import {
   googleMapsSearchUrl,
 } from "@/lib/mapDirections";
 import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
-import { enrichTripPlaces, generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, tripHasItineraryActivities, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
+import { generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, tripHasItineraryActivities, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
 import { shareTrip, unshareTrip } from "@/lib/community";
 import type { AppTab } from "@/lib/navigation";
 
@@ -357,7 +357,6 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   const [shareOpen, setShareOpen] = useState(false);
   const [shareCaption, setShareCaption] = useState("");
   const [shareBusy, setShareBusy] = useState(false);
-  const enrichStarted = useRef(false);
   const itineraryRetryRef = useRef(0);
 
   const loadItinerary = useCallback(async (options?: { forceGenerate?: boolean }) => {
@@ -419,7 +418,6 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   }, [tripPlanId]);
 
   useEffect(() => {
-    enrichStarted.current = false;
     saveLastTripId(tripPlanId);
     loadItinerary();
   }, [loadItinerary, tripPlanId]);
@@ -446,17 +444,6 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
     } else {
       setHotels(null);
     }
-  }, [trip, tripPlanId]);
-
-  useEffect(() => {
-    if (!trip?.geocoding_configured || enrichStarted.current) return;
-    const activityCount = trip.itinerary.reduce((sum, day) => sum + day.activities.length, 0);
-    if (activityCount === 0 || trip.places_geocoded >= activityCount) return;
-
-    enrichStarted.current = true;
-    enrichTripPlaces(tripPlanId)
-      .then(setTrip)
-      .catch(() => {});
   }, [trip, tripPlanId]);
 
   async function handleShare() {

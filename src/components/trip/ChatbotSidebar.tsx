@@ -89,7 +89,7 @@ export default function ChatbotSidebar(props: ChatbotSidebarProps) {
   const { isOpen, onClose, initialInput = "", mode = "trip" } = props;
   const isConsult = mode === "consult";
   const tripPlanId = !isConsult ? props.tripPlanId : undefined;
-  const destination = !isConsult ? props.destination : "Travel";
+  const destination = !isConsult ? (props.destination ?? "your trip") : "Travel";
   const onItineraryUpdated = !isConsult ? props.onItineraryUpdated : undefined;
   const onPlanTrip = isConsult ? props.onPlanTrip : undefined;
 

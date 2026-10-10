@@ -127,13 +127,10 @@ function ActivityRow({
   previous: TripActivity | null;
 }) {
   const { theme } = useTheme();
-  const typeStyle = getActivityTypeStyle(activity.type, theme);
-  const mapsUrl =
-    activity.latitude != null && activity.longitude != null
-      ? previous
-        ? googleMapsLegUrl(previous.name, activity.name, destination)
-        : googleMapsSearchUrl(activity.name, destination)
-      : googleMapsSearchUrl(activity.name, destination);
+  const typeStyle = getActivityTypeStyle(activity.type);
+  const mapsUrl = previous
+    ? googleMapsLegUrl(previous.name, activity.name, destination)
+    : googleMapsSearchUrl(activity.name, destination);
 
   return (
     <div
@@ -146,7 +143,7 @@ function ActivityRow({
         </span>
         <span
           className="px-2 py-0.5 rounded-full text-xs"
-          style={{ background: typeStyle.bg, color: typeStyle.text, fontFamily: "system-ui, sans-serif" }}
+          style={{ background: typeStyle.gradient, color: "#fff", fontFamily: "system-ui, sans-serif" }}
         >
           {activity.type}
         </span>

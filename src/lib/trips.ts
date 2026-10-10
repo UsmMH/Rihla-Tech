@@ -64,20 +64,6 @@ export interface TripListItem {
   updated_at: string;
 }
 
-export interface TripAlternative {
-  title: string;
-  tagline: string;
-  highlights: string[];
-  budget_note: string;
-  match_percent: number;
-}
-
-export interface EditTripResult {
-  alternatives: TripAlternative[];
-  source: string;
-  fallback_reason: string | null;
-}
-
 export interface StoredChatMessage {
   id: number;
   role: "user" | "assistant";
@@ -227,11 +213,6 @@ export async function getTripHotels(tripPlanId: number): Promise<HotelsResult> {
   return apiFetch<HotelsResult>(`/trips/${tripPlanId}/hotels`);
 }
 
-export async function enrichTripPlaces(tripPlanId: number): Promise<TripDetail> {
-  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/enrich-places`, { method: "POST" });
-  return normalizeTripDetail(result);
-}
-
 const LAST_TRIP_KEY = "rihlatech_last_trip_id";
 const LAST_PAGE_KEY = "rihlatech_last_page";
 
@@ -266,16 +247,6 @@ export function clearLastTripId(): void {
 export async function listTrips(): Promise<TripListItem[]> {
   const result = await apiFetch<{ trips: TripListItem[] }>("/trips");
   return result.trips;
-}
-
-export async function editTrip(
-  tripPlanId: number,
-  prompt = "Suggest 3 alternative destinations similar to this trip.",
-): Promise<EditTripResult> {
-  return apiFetch<EditTripResult>(`/trips/${tripPlanId}/edit`, {
-    method: "POST",
-    body: JSON.stringify({ prompt }),
-  });
 }
 
 export async function getChatMessages(tripPlanId: number): Promise<StoredChatMessage[]> {
@@ -324,16 +295,4 @@ export async function sendConsultMessage(
 
 export async function deleteTrip(tripPlanId: number): Promise<void> {
   await apiFetch<void>(`/trips/${tripPlanId}`, { method: "DELETE" });
-}
-
-export async function updatePlaceLocation(
-  tripPlanId: number,
-  placeId: number,
-  payload: { label: string; latitude: number; longitude: number; mapbox_id?: string | null },
-): Promise<TripDetail> {
-  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/places/${placeId}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-  return normalizeTripDetail(result);
 }

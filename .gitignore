@@ -16,6 +16,9 @@ backend/**/__pycache__/
 backend/*.egg-info/
 backend/.pytest_cache/
 
+# Local backups (do not commit)
+.phase5-backup/
+
 # IDE / OS
 .DS_Store
 *.log
