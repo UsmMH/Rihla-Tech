@@ -1,5 +1,6 @@
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DOMAIN_LABEL_PATTERN = /^[a-zA-Z0-9-]+$/;
+const TYPO_EMAIL_DOMAINS = new Set(["gmail.co", "yahoo.co", "hotmail.co", "outlook.co"]);
 
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 128;
@@ -24,9 +25,7 @@ function isValidEmailFormat(email: string): boolean {
     return false;
   }
 
-  const tld = labels[labels.length - 1].toLowerCase();
-  // Reject likely typos like user@gmail.co while allowing real 2-letter ccTLDs (.sa, .de, .io, .ai).
-  if (labels.length === 2 && tld.length === 2 && tld === "co") return false;
+  if (TYPO_EMAIL_DOMAINS.has(domain.toLowerCase())) return false;
 
   return true;
 }

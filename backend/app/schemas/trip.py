@@ -90,20 +90,6 @@ class PlaceSearchResult(BaseModel):
     city: str | None = None
 
 
-class ActivityPlaceSearchResult(BaseModel):
-    label: str
-    latitude: float
-    longitude: float
-    mapbox_id: str | None = None
-
-
-class UpdatePlaceLocationRequest(BaseModel):
-    label: str = Field(min_length=1, max_length=255)
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
-    mapbox_id: str | None = Field(default=None, max_length=120)
-
-
 class TripDetailResponse(BaseModel):
     trip_plan: TripPlanPublic
     destination: str
@@ -140,28 +126,6 @@ class TripListItem(BaseModel):
 
 class TripListResponse(BaseModel):
     trips: list[TripListItem]
-
-
-class EditTripRequest(BaseModel):
-    prompt: str = Field(
-        default="Suggest 3 alternative destinations similar to this trip.",
-        min_length=1,
-        max_length=2000,
-    )
-
-
-class TripAlternativePublic(BaseModel):
-    title: str
-    tagline: str
-    highlights: list[str]
-    budget_note: str
-    match_percent: int
-
-
-class EditTripResponse(BaseModel):
-    alternatives: list[TripAlternativePublic]
-    source: str
-    fallback_reason: str | None = None
 
 
 class ChatMessageRequest(BaseModel):

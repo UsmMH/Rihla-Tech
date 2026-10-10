@@ -68,8 +68,7 @@ npm run dev
 |---|---|---|
 | `JWT_SECRET` | Auth | 1+ |
 | `LLM_PROVIDER`, `GEMINI_API_KEY`, etc. | LLM | 2+ |
-| `MAPBOX_ACCESS_TOKEN` | Backend geocoding + Search Box + city/POI search | 4+ |
-| `VITE_MAPBOX_ACCESS_TOKEN` | Optional; legacy embedded map components | 4+ |
+| `MAPBOX_ACCESS_TOKEN` | Backend geocoding + Search Box + city/airport search | 4+ |
 | `DUFFEL_ACCESS_TOKEN` | Duffel sandbox flight search | 6 |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Email verification codes at registration | 9 |
 
@@ -107,7 +106,7 @@ Rihla-Tech/
 │   │   ├── flights.py, hotels.py          # Phase 6
 │   │   ├── community.py                   # Phase 7
 │   │   ├── quiz_validation.py             # Quiz input validation
-│   │   ├── edit.py, apply_edit.py, chat.py, consult_chat.py
+│   │   ├── apply_edit.py, chat.py, consult_chat.py
 │   └── schemas/trip.py, community.py
 ├── src/
 │   ├── pages/              AppDashboard, TripResult, CommunityPage, CommunityTripPage, ...
@@ -188,17 +187,13 @@ App nav (desktop): Home · My Trips · Community · Profile
 | GET | `/api/trips/{id}` | Result page — load trip |
 | GET | `/api/trips/{id}/flights` | Result page — when `include_flights` |
 | GET | `/api/trips/{id}/hotels` | Result page — when `include_hotels` |
-| POST | `/api/trips/{id}/enrich-places` | Re-geocode (skips `location_confirmed` pins) |
-| POST | `/api/trips/{id}/edit` | LLM → 3 **destination** alternatives |
 | POST | `/api/trips/{id}/apply-edit` | Apply itinerary changes; optional `chat_message_id` |
-| PATCH | `/api/trips/{id}/places/{place_id}` | Save user-confirmed map location |
 
 ### Places (Phase 4–5)
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/places/search?q=&kind=city\|airport` | City autocomplete (destination) or airport autocomplete (origin when flights=yes) |
-| GET | `/api/places/search-poi?q=&trip_plan_id=` | POI search (Search Box) |
 
 ### Chat (Phase 5 + 5b)
 
@@ -528,7 +523,7 @@ Replaces basic format-only email validation. **Strict flow:** register does not 
 9. **Consult chat:** Client-side history only; not persisted to DB.
 10. **Maps on result page:** Google Maps deep-links only.
 11. **Typecheck:** `npm run typecheck` needs `typescript` in devDependencies.
-12. **Itinerary speed:** `POST /trips/generate` is LLM-bound; Mapbox geocoding runs in background on result page via `enrich-places`.
+12. **Itinerary speed:** `POST /trips/generate` is LLM-bound; activity maps use Google Maps search links (no per-activity Mapbox geocode on the result page).
 13. **Flights/hotels:** Loaded after itinerary appears (Duffel can be slow; does not block generate spinner).
 14. **Quiz validation:** City/airport must be picked from suggestions when API returns matches; backend re-validates on submit.
 15. **Airport search:** Uses **Duffel** `places/suggestions` (needs `DUFFEL_ACCESS_TOKEN`); Mapbox Search Box airport POI as fallback. Mapbox Geocoding v5 `types=poi` does **not** return airports — do not use for origin.

@@ -40,9 +40,11 @@ MOCK_REPLY = (
 )
 
 CONFIRM_RE = re.compile(
-    r"^(yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|please do|apply|"
-    r"update it|adjust it|sounds good|let'?s do it|that works|confirm|proceed)"
-    r"[\s.!?]*$",
+    r"^(?:"
+    r"yes please|ok do it|let'?s do it|sounds good|go ahead|that works|"
+    r"please do|do it|update it|adjust it|confirm|proceed|apply|"
+    r"please|thanks|yeah|yep|yup|sure|okay|yes|ok"
+    r")[\s.!?]*$",
     re.IGNORECASE,
 )
 

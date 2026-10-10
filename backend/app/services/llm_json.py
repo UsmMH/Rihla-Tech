@@ -119,16 +119,28 @@ def parse_llm_json_object(content: str) -> dict[str, Any]:
     raise ValueError(f"No JSON object in LLM response: {content[:300]!r}")
 
 
+def _http_status_code(exc: Exception) -> int | None:
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return code
+    response = getattr(exc, "response", None)
+    if response is not None:
+        status = getattr(response, "status_code", None)
+        if isinstance(status, int):
+            return status
+    return None
+
+
 def is_retryable_llm_error(exc: Exception) -> bool:
     if isinstance(exc, (json.JSONDecodeError, ValueError)):
+        return True
+    status = _http_status_code(exc)
+    if status in (429, 503):
         return True
     message = str(exc).lower()
     return any(
         token in message
         for token in (
-            "429",
-            "503",
-            "rate",
             "quota",
             "high demand",
             "unavailable",
@@ -137,6 +149,20 @@ def is_retryable_llm_error(exc: Exception) -> bool:
             "no json",
         )
     )
+
+
+def _retryable_llm_error_self_check() -> None:
+    class Fake429(Exception):
+        status_code = 429
+
+    class FakeGenerateContentError(Exception):
+        pass
+
+    assert is_retryable_llm_error(Fake429())
+    assert not is_retryable_llm_error(FakeGenerateContentError("404 model generateContent not found"))
+
+
+_retryable_llm_error_self_check()
 
 
 # Default completion budget — free models often truncate below OpenAI's default.

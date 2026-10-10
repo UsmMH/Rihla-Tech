@@ -14,6 +14,7 @@ _PASSWORD_HAS_LETTER = re.compile(r"[A-Za-z]")
 _PASSWORD_HAS_DIGIT = re.compile(r"\d")
 _EMAIL_BASIC = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _DOMAIN_LABEL = re.compile(r"^[a-zA-Z0-9-]+$")
+_TYPO_EMAIL_DOMAINS = frozenset({"gmail.co", "yahoo.co", "hotmail.co", "outlook.co"})
 
 
 def normalize_email(email: str) -> str:
@@ -39,9 +40,7 @@ def validate_email_format(email: str) -> str:
         if not label or not _DOMAIN_LABEL.fullmatch(label):
             raise ValueError("Enter a valid email address.")
 
-    tld = labels[-1].lower()
-    # Reject likely typos like user@gmail.co while allowing real 2-letter ccTLDs (.sa, .de, .io, .ai).
-    if len(labels) == 2 and len(tld) == 2 and tld == "co":
+    if domain.lower() in _TYPO_EMAIL_DOMAINS:
         raise ValueError("Enter a valid email address.")
 
     return cleaned.lower()
