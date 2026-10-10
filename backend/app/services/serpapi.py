@@ -32,7 +32,6 @@ SERPAPI_SEARCH_URL = "https://serpapi.com/search.json"
 # Single global quota lock (ponytail: one integer; split locks if contention ever matters).
 SERPAPI_QUOTA_LOCK_ID = 8_424_242
 _FIXTURES_DIR = Path(__file__).resolve().parents[1] / "data" / "serpapi_fixtures"
-_NO_RESULTS_ERRORS = frozenset({"google hasn't returned any results for this query.", "no results"})
 _HTTP_RELEASE_CODES = frozenset({400, 401, 429})
 
 
@@ -241,13 +240,14 @@ def _fetch_serpapi_json(params: dict[str, Any], api_key: str) -> dict[str, Any]:
     err = payload.get("error")
     if isinstance(err, str) and err.strip():
         normalized = err.strip().lower()
-        if normalized not in _NO_RESULTS_ERRORS:
-            logger.warning(
-                "SerpApi API error engine=%s detail=%s",
-                engine,
-                _redact_key(err, api_key),
-            )
-            _raise_unavailable("error", release_usage=True)
+        if "any results" in normalized or "no results" in normalized:
+            return {}
+        logger.warning(
+            "SerpApi API error engine=%s detail=%s",
+            engine,
+            _redact_key(err, api_key),
+        )
+        _raise_unavailable("error", release_usage=False)
     return payload
 
 

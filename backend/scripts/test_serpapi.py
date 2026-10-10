@@ -7,6 +7,7 @@ import sys
 import traceback
 import unittest
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -14,7 +15,7 @@ from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
@@ -35,6 +36,8 @@ from app.services.serpapi import (
 )
 
 DUMMY_KEY = "serpapi_test_key_do_not_log_me_99"
+# Rows with this engine are created only by this script's live-search mocks.
+TEST_USAGE_ENGINE = "google_flights"
 BASE_FLIGHT = {
     "engine": "google_flights",
     "departure_id": "RUH",
@@ -82,6 +85,23 @@ def _url_with_key() -> str:
     return f"https://serpapi.com/search.json?api_key={DUMMY_KEY}&engine=google_flights"
 
 
+def _delete_test_usage_rows(session, user_ids: list[int], since: datetime) -> None:
+    if not user_ids:
+        return
+    session.execute(
+        delete(SerpApiUsage).where(
+            or_(
+                SerpApiUsage.user_id.in_(user_ids),
+                and_(
+                    SerpApiUsage.user_id.is_(None),
+                    SerpApiUsage.engine == TEST_USAGE_ENGINE,
+                    SerpApiUsage.created_at >= since,
+                ),
+            )
+        )
+    )
+
+
 print("mock fixtures + locale")
 _assert_mock_fixture({**BASE_FLIGHT, "type": "1"}, "google_flights")
 _assert_mock_fixture({**BASE_FLIGHT, "type": "2", "return_date": None}, "google_flights")
@@ -121,6 +141,7 @@ print("OK environment detection")
 
 db = SessionLocal()
 test_users: list[int] = []
+test_started_at = datetime.now(timezone.utc)
 try:
     for is_admin in (False, True):
         user = User(
@@ -214,7 +235,31 @@ try:
             return _Resp()
 
         before, after = _run_fetch_failure(urlopen_api_error_json, label="JSON error field")
-        assert after == before, "usage row released on API error JSON"
+        assert after == before + 1, "usage row kept on 200 JSON error field"
+
+        def urlopen_no_results_error(url, timeout=60):  # noqa: ARG001
+            payload = json.dumps(
+                {"error": "Google Flights hasn't returned any results for this query."}
+            ).encode()
+
+            class _Resp:
+                def read(self, *a, **k):
+                    return payload
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+            return _Resp()
+
+        before = usage_count()
+        with patch("app.services.serpapi.urlopen", urlopen_no_results_error):
+            result = serpapi_search(db, db.get(User, user_id), BASE_FLIGHT)
+        after = usage_count()
+        assert result == {}, "no-results error returns empty result"
+        assert after == before + 1, "usage row kept on no-results 200 error"
 
         def urlopen_invalid_json(url, timeout=60):  # noqa: ARG001
             class _Resp:
@@ -325,7 +370,7 @@ try:
             raise
     print("OK per-user cap (admin exempt)")
 
-    db.execute(delete(SerpApiUsage))
+    _delete_test_usage_rows(db, test_users, test_started_at)
     db.commit()
 
     with patch("app.services.serpapi.serpapi_mock_enabled", return_value=False):
@@ -364,7 +409,7 @@ try:
 
 finally:
     if test_users:
-        db.execute(delete(SerpApiUsage).where(SerpApiUsage.user_id.in_(test_users)))
+        _delete_test_usage_rows(db, test_users, test_started_at)
         db.execute(delete(User).where(User.id.in_(test_users)))
     db.commit()
     db.close()
