@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     duffel_access_token: str | None = None
     resend_api_key: str | None = None
     resend_from_email: str = "RihlaTech <onboarding@resend.dev>"
+    require_email_verification: bool = True
 
     @property
     def cors_origin_list(self) -> list[str]:

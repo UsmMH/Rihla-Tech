@@ -23,7 +23,7 @@ _SCHEMA_COLUMNS = (
     ("trip_plans", "is_shared", "BOOLEAN DEFAULT FALSE"),
     ("trip_plans", "share_caption", "VARCHAR(500)"),
     ("trip_plans", "shared_at", "TIMESTAMPTZ"),
-    ("users", "is_verified", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("users", "is_verified", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("users", "verification_code_hash", "VARCHAR(64)"),
     ("users", "verification_code_expires_at", "TIMESTAMPTZ"),
     ("users", "verification_attempts", "INTEGER NOT NULL DEFAULT 0"),
@@ -35,17 +35,8 @@ def _ensure_schema_patches() -> None:
     with engine.begin() as conn:
         for table, column, spec in _SCHEMA_COLUMNS:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {spec}"))
-        # Legacy accounts (pre email-verification): no pending code — keep them able to log in.
-        conn.execute(
-            text(
-                "UPDATE users SET is_verified = TRUE "
-                "WHERE is_verified = FALSE "
-                "AND verification_code_hash IS NULL "
-                "AND verification_code_expires_at IS NULL "
-                "AND verification_last_sent_at IS NULL "
-                "AND verification_attempts = 0"
-            )
-        )
+        # One-shot legacy backfill: column is added with DEFAULT TRUE; new signups use DEFAULT FALSE.
+        conn.execute(text("ALTER TABLE users ALTER COLUMN is_verified SET DEFAULT FALSE"))
 
 
 @asynccontextmanager

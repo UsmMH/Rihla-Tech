@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -8,6 +10,8 @@ from app.services.destinations import trip_context
 from app.services.itinerary import get_owned_trip, get_trip_detail
 from app.services.llm import ITINERARY_TIMEOUT, LLMError, complete_chat, llm_configured
 from app.services.llm_json import LLM_MAX_TOKENS, parse_llm_json_object
+
+logger = logging.getLogger(__name__)
 
 
 def _itinerary_with_ids(trip: TripPlan) -> str:
@@ -89,9 +93,10 @@ Current places (use place_id):
             parse=parse_llm_json_object,
         )
     except LLMError as exc:
+        logger.warning("Apply itinerary edit LLM failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to parse edit response: {exc}",
+            detail="Failed to apply itinerary edit. Please try again.",
         ) from exc
 
     updates = payload.get("updates", [])

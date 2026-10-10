@@ -100,8 +100,33 @@ def create_user(
         first_name=first_name,
         last_name=last_name,
         phone_num=phone_num,
+        is_verified=False,
     )
     db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def refresh_unverified_user(
+    db: Session,
+    user: User,
+    *,
+    password: str,
+    first_name: str,
+    last_name: str,
+    phone_num: str | None,
+) -> User:
+    validate_password_format(password)
+    user.password = hash_password(password)
+    user.first_name = first_name
+    user.last_name = last_name
+    user.phone_num = phone_num
+    user.is_verified = False
+    user.verification_code_hash = None
+    user.verification_code_expires_at = None
+    user.verification_attempts = 0
+    user.verification_last_sent_at = None
     db.commit()
     db.refresh(user)
     return user
