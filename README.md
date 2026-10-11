@@ -30,24 +30,27 @@ Google Maps, and you can share your trips with a community of other travelers.
 
 ```mermaid
 flowchart LR
-    A[Sign up] --> B[Answer a short quiz]
+    A[Sign up & verify email] --> B[Answer a short quiz]
     B --> C[Pick your preferences]
     C --> D[AI builds your itinerary]
     D --> E[Refine it by chatting]
-    E --> F[Share with the community]
+    E --> F[Flights / hotels / share]
 ```
 
 ---
 
 ## Key features
 
-- **AI itinerary** — a day-by-day plan with real venue names, tailored to your dates, budget, and interests
-- **Not sure where to go?** — the AI suggests destinations based on your preferences
-- **Travel chatbot** — ask questions and apply itinerary changes in plain language
-- **Flights & hotels** — sample fares and stay ideas with links to Google Flights and Booking.com
-- **Maps** — open any activity in Google Maps, or get a route for the whole day
-- **Community** — share your trips, browse others, and vote, save, or comment
-- **Installable** — works as a PWA on mobile and desktop
+- **AI itinerary** — day-by-day plan with real venue names, tailored to dates, budget, and interests
+- **Destination suggestions** — when you are not sure where to go yet
+- **Travel chatbot** — ask questions and apply itinerary edits in plain language
+- **Flights** — [SerpApi](https://serpapi.com/) Google Flights (SAR), cached per trip; quiz asks **round trip vs one way**; round trip: pick outbound → return options → book via airline checkout; one way: book from outbound when available; Google Flights fallback links
+- **Airports** — Duffel place search for departure/destination IATA (quiz autocomplete + resolution)
+- **Hotels** — Mapbox lodging suggestions with Booking.com search links (optional in quiz)
+- **Maps** — Google Maps deep-links per activity and day routes
+- **Community** — share trips, discover, vote, save, comment
+- **Email verification** — Resend one-time codes on register (configurable)
+- **Installable PWA** — mobile and desktop
 
 ---
 
@@ -55,14 +58,14 @@ flowchart LR
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 18, Vite, Tailwind CSS, shadcn/ui, Framer Motion |
-| Backend | FastAPI, SQLAlchemy |
-| Database | PostgreSQL 16 |
-| Auth | JWT (python-jose) + bcrypt |
-| AI | Gemini, OpenRouter, or OpenAI (`LLM_PROVIDER` in `.env`) |
-| Maps & geocoding | Mapbox (search) + Google Maps deep-links |
-| Flights & hotels | Duffel sandbox + Mapbox lodging; Google Flights / Booking.com deep-links |
-| Deploy | Vercel (web) · Render (API) · Neon (database) |
+| Frontend | React 18, Vite, Tailwind CSS, Framer Motion |
+| Backend | FastAPI, SQLAlchemy, PostgreSQL |
+| Auth | JWT + bcrypt; optional email verification (Resend) |
+| AI | Gemini, OpenRouter, or OpenAI (`LLM_PROVIDER`) |
+| Geocoding & cities | Mapbox |
+| Flights | SerpApi `google_flights` (quota + DB cache); Duffel **only** for airport autocomplete |
+| Hotels | Mapbox lodging POI + Booking.com deep-links |
+| Deploy | Vercel (SPA) · Render (API, `render.yaml`) · Neon (`DATABASE_URL`) |
 
 ---
 
@@ -70,52 +73,87 @@ flowchart LR
 
 | Phase | Status | Summary |
 |-------|--------|---------|
-| Setup & auth | ✅ | FastAPI, PostgreSQL, JWT login/register |
-| Quiz & preferences | ✅ | Logistics quiz, preferences, AI destination suggestions |
-| AI itinerary | ✅ | Day-by-day generation saved to your account |
-| Maps | ✅ | City search, Google Maps deep-links |
-| Edit & chat | ✅ | My Trips, chatbot, apply-edit |
-| App shell & mobile | ✅ | Home dashboard, profile, consult chat, responsive pass |
-| Flights & hotels | ✅ | Duffel sandbox + mock; Booking.com / Google Flights links |
-| Community | ✅ | Share, discover, vote, save, comment |
-| Admin, deploy & PWA | ✅ | Admin dashboard, Vercel + Render + Neon, installable PWA |
-| Refinements & quiz redesign | ✅ | Auth polish, conditional flights/origin, airport search |
+| Setup & auth | ✅ | FastAPI, PostgreSQL, JWT, email verification |
+| Quiz & preferences | ✅ | Logistics quiz, round/one-way flights, preferences, AI destinations |
+| AI itinerary | ✅ | Day-by-day generation persisted per user |
+| Maps & chat | ✅ | Google Maps links, chatbot, apply-edit |
+| Flights | ✅ | SerpApi search, cache, booking flow, mock mode for dev |
+| Hotels | ✅ | Mapbox + mock/Booking links |
+| Community & admin | ✅ | Share, discover, moderation dashboard |
+| Deploy & PWA | ✅ | Vercel + Render + Neon |
 
-**Deferred:** multi-city trips, images API, nationality/passport question. See [`plan.md`](plan.md).
+**Deferred:** multi-city trips, SerpApi hotels UI migration, images API. See [`plan.md`](plan.md) and [`SERPAPI_PLAN.md`](SERPAPI_PLAN.md).
 
 ---
 
 ## Run locally
 
-**Prerequisites:** Node.js 18+, Python 3.11+, Docker Desktop, and API keys (see `.env.example`).
+**Prerequisites:** Node.js 18+, **Python 3.11+** (match `PYTHON_VERSION` in `render.yaml`), Docker Desktop.
 
 ```bash
-# 1. Environment
-cp .env.example .env          # add JWT_SECRET, an LLM key, MAPBOX_ACCESS_TOKEN, (optional) DUFFEL_ACCESS_TOKEN
+# 1. Environment — copy and fill keys (see comments in file)
+cp .env.example .env
+
+# Minimum for a full local run:
+#   JWT_SECRET, GEMINI_API_KEY or OPENROUTER_API_KEY, MAPBOX_ACCESS_TOKEN
+# Flights without spending SerpApi credits:
+#   SERPAPI_MOCK=true
+# Live flight search:
+#   SERPAPI_API_KEY=...  and  SERPAPI_MOCK=false
+# Airport quiz autocomplete / resolution:
+#   DUFFEL_ACCESS_TOKEN=...
 
 # 2. Install
 npm install
 cd backend && python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt    # Windows
+# source .venv/bin/activate && pip install -r requirements.txt   # macOS/Linux
 
 # 3. Database (host port 5433)
 docker compose up -d
 
-# 4. Backend
+# 4. Backend (from backend/)
 .\.venv\Scripts\uvicorn app.main:app --reload --port 8000
 
-# 5. Frontend (new terminal, repo root)
+# 5. Frontend (repo root)
 npm run dev
 ```
 
-Open **http://localhost:5173**. Restart both servers after changing `.env`.
+Open **http://localhost:5173**. Restart backend after `.env` changes.
+
+**Checks:** `npm run typecheck` · `npm run build` · `python backend/scripts/test_serpapi.py` (DB + mock SerpApi/flights)
+
+---
+
+## Production environment
+
+**Render (API)** — see [`render.yaml`](render.yaml). Set in the dashboard (not in git):
+
+| Variable | Notes |
+|----------|--------|
+| `DATABASE_URL` | Neon Postgres (`postgresql://…` is rewritten to `psycopg2` in app) |
+| `JWT_SECRET` | Long random string |
+| `CORS_ORIGINS` | Your Vercel URL(s), comma-separated |
+| `APP_ENV` | `production` |
+| `GEMINI_API_KEY` / `OPENROUTER_API_KEY` | At least one LLM |
+| `MAPBOX_ACCESS_TOKEN` | Geocoding |
+| `DUFFEL_ACCESS_TOKEN` | Airport search in quiz |
+| `SERPAPI_API_KEY` | Live flights (`SERPAPI_MOCK=false` on Render) |
+| `RESEND_API_KEY` + `RESEND_FROM_EMAIL` | If `REQUIRE_EMAIL_VERIFICATION=true` |
+
+Optional SerpApi tuning: `SERPAPI_MONTHLY_CAP` (default `210`), `SERPAPI_HOURLY_CAP`, `SERPAPI_USER_MONTHLY_CAP`, `SERPAPI_CACHE_TTL_HOURS`.
+
+**Vercel (frontend):** `VITE_API_BASE_URL=https://<your-render-service>.onrender.com/api`
+
+Pin **`PYTHON_VERSION=3.11.9`** on Render if the service is not created from the Blueprint (avoids accidental Python 3.14).
 
 ---
 
 ## Documentation
 
-- **[`docs/project-summary.md`](docs/project-summary.md)** — technical deep-dive: system architecture, LLM layer, data model, and user flows
-- **[`plan.md`](plan.md)** — roadmap, full API reference, and development notes
+- **[`docs/project-summary.md`](docs/project-summary.md)** — architecture, LLM layer, data model, flows
+- **[`plan.md`](plan.md)** — roadmap and API notes
+- **[`SERPAPI_PLAN.md`](SERPAPI_PLAN.md)** — flights/hotels SerpApi design and quotas
 
 ---
 
