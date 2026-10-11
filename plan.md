@@ -1,7 +1,7 @@
 # RihlaTech — Development Plan & Handoff
 
 > **Purpose:** Continue development in a new chat without losing context.  
-> **Last updated:** July 2026 · **Phases 0–8 deployed** · **Refinements + Quiz redesign done** · **`dev` branch active** · **Technical summary in `docs/project-summary.md`** · **Next: polish backlog / Nice to have**
+> **Last updated:** July 2026 · **Phases 0–8 deployed** · **Refinements + Quiz redesign + Email verification done** · **`dev` branch active** · **Technical summary in `docs/project-summary.md`** · **Next: get a Resend API key, test, then polish backlog / Nice to have**
 
 ---
 
@@ -68,11 +68,13 @@ npm run dev
 |---|---|---|
 | `JWT_SECRET` | Auth | 1+ |
 | `LLM_PROVIDER`, `GEMINI_API_KEY`, etc. | LLM | 2+ |
-| `MAPBOX_ACCESS_TOKEN` | Backend geocoding + Search Box + city/POI search | 4+ |
-| `VITE_MAPBOX_ACCESS_TOKEN` | Optional; legacy embedded map components | 4+ |
+| `MAPBOX_ACCESS_TOKEN` | Backend geocoding + Search Box + city/airport search | 4+ |
 | `DUFFEL_ACCESS_TOKEN` | Duffel sandbox flight search | 6 |
+| `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Email verification codes at registration | 9 |
 
 Same Mapbox **public** token (`pk.…`) can be used for both. Recommended scopes: geocoding, Search Box.
+
+**Resend sandbox limitation:** without a verified domain, `onboarding@resend.dev` can only deliver to the email address on the Resend account itself — any other recipient gets a 403. If `RESEND_API_KEY` is unset, or a send fails, the code is logged to the backend console instead (`RESEND_API_KEY not set — verification code for x@y.com: 123456`) so dev/testing isn't blocked. Verify a domain at resend.com/domains before testing with real user emails or deploying.
 
 ---
 
@@ -104,7 +106,7 @@ Rihla-Tech/
 │   │   ├── flights.py, hotels.py          # Phase 6
 │   │   ├── community.py                   # Phase 7
 │   │   ├── quiz_validation.py             # Quiz input validation
-│   │   ├── edit.py, apply_edit.py, chat.py, consult_chat.py
+│   │   ├── apply_edit.py, chat.py, consult_chat.py
 │   └── schemas/trip.py, community.py
 ├── src/
 │   ├── pages/              AppDashboard, TripResult, CommunityPage, CommunityTripPage, ...
@@ -160,8 +162,10 @@ App nav (desktop): Home · My Trips · Community · Profile
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/auth/register` | Create account → JWT |
-| POST | `/api/auth/login` | Sign in → JWT |
+| POST | `/api/auth/register` | Create account (unverified) → sends 6-digit code, **no token yet** |
+| POST | `/api/auth/verify` | `{email, code}` → marks verified, returns JWT |
+| POST | `/api/auth/resend-code` | `{email}` → new code (60s cooldown, blocked if already verified) |
+| POST | `/api/auth/login` | Sign in → JWT; **403** if `is_verified` is false |
 | GET | `/api/auth/me` | Current user |
 
 ### Quiz (Phase 2)
@@ -183,17 +187,13 @@ App nav (desktop): Home · My Trips · Community · Profile
 | GET | `/api/trips/{id}` | Result page — load trip |
 | GET | `/api/trips/{id}/flights` | Result page — when `include_flights` |
 | GET | `/api/trips/{id}/hotels` | Result page — when `include_hotels` |
-| POST | `/api/trips/{id}/enrich-places` | Re-geocode (skips `location_confirmed` pins) |
-| POST | `/api/trips/{id}/edit` | LLM → 3 **destination** alternatives |
 | POST | `/api/trips/{id}/apply-edit` | Apply itinerary changes; optional `chat_message_id` |
-| PATCH | `/api/trips/{id}/places/{place_id}` | Save user-confirmed map location |
 
 ### Places (Phase 4–5)
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/places/search?q=&kind=city\|airport` | City autocomplete (destination) or airport autocomplete (origin when flights=yes) |
-| GET | `/api/places/search-poi?q=&trip_plan_id=` | POI search (Search Box) |
 
 ### Chat (Phase 5 + 5b)
 
@@ -291,12 +291,12 @@ See git history (`b20c8a3`, `efd6483`, etc.) for auth, quiz, AI itinerary, maps 
 
 Phase 8 (admin + deploy + PWA) is **done**. **High + Medium refinements** and **Quiz Flow Redesign** are **done**.
 
-**Where we are:** Core FYP feature set is complete. **`dev` branch** has bug fixes and polish (long-trip itinerary, flight/hotel links, Mapbox hotels). Merge `dev` → `main` when ready to deploy.
+**Where we are:** Core FYP feature set is complete. **`dev` branch** has bug fixes and polish (long-trip itinerary, flight/hotel links, Mapbox hotels, generate-race fix, destination-TBD routing, email verification). Merge `dev` → `main` when ready to deploy.
 
 **Next (pick one):**
 1. **Merge `dev` → `main`** — deploy itinerary + hotel/flight polish to Vercel/Render when tested.
-2. **Polish backlog** — multi-city trips, email validation, destination picker TBD bug.
-3. **Nice to have** — nationality/passport question, Images API (Pexels).
+2. **Polish backlog** — multi-city trips, long-trip LLM token ceiling, combine hotels+flights question.
+3. **Nice to have** — Google Sign-In (follow-up to email verification), nationality/passport question, Images API (Pexels).
 
 Fix **one item at a time**; mark `[x]` when done.
 
@@ -410,6 +410,21 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
 
 ---
 
+## Email verification (one-time code) ✅
+
+Replaces basic format-only email validation. **Strict flow:** register does not issue a JWT — user must enter the emailed code first.
+
+- [x] **Backend** — `users` table gains `is_verified`, `verification_code_hash`, `verification_code_expires_at`, `verification_attempts`, `verification_last_sent_at` (schema-patched in `main.py::_ensure_schema_patches`, same pattern as prior column additions — no Alembic migration needed, just restart).
+  - `backend/app/services/email_verification.py` — 6-digit code (SHA-256 hash + `JWT_SECRET` pepper, no new dependency), 10-minute expiry, 60s resend cooldown, 5 wrong-attempt limit before forcing a resend.
+  - `backend/app/services/email.py` — sends via **Resend**; never raises (failures/missing key log the code to the console instead, so dev/testing isn't blocked by the sandbox restriction below).
+  - `POST /auth/register` → creates user (unverified) + sends code, returns `{email, message}` (**no token**). `POST /auth/verify` → `{email, code}` → JWT. `POST /auth/resend-code` → `{email}` (429 on cooldown, 400 if already verified). `POST /auth/login` → **403** if `is_verified` is false.
+- [x] **Frontend** — new `VerifyEmailPage` (code input + resend button with countdown). `RegisterPage` no longer auto-logs-in; routes to verify screen instead. `LoginPage` catches 403 and routes to verify screen with `autoSendOnMount` (register already sent one; a 403-triggered visit hasn't, so it requests a fresh one).
+- **Not done:** Google Sign-In — deliberately scoped out as a separate follow-up integration (different auth mechanism entirely).
+- **Known limitation:** Resend's `onboarding@resend.dev` sandbox sender can only deliver to the email on the Resend account itself; verify a custom domain (resend.com/domains) before testing with other real addresses or deploying.
+- **Superseded:** the old "Email validation edge cases" polish-backlog item (stricter TLD/format checks) — format validation still runs, but a wrong-but-well-formed email now simply never gets a working code, which is a stronger guarantee than regex tightening alone.
+
+---
+
 ## Git workflow (top priority)
 
 - [x] **`dev` branch set up** — create `dev` from current `main` if it does not exist; all future work happens on `dev`.
@@ -428,6 +443,18 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
   *Files:* `itinerary.py`, `llm_json.py`  
   *Done:* Scale `max_tokens` with trip length (`itinerary_max_tokens`); `parse_llm_itinerary_object` salvages truncated `days` arrays and validates day count; retries bump token budget.
 
+- [x] **"Generate My Itinerary" button stuck greyed out** — hotels/extras step is optional, but Next stayed disabled until the user selected then unselected an option.  
+  *Files:* `src/lib/quizValidation.ts`  
+  *Done:* `isQuestionStepReady` checked `value === undefined` before reaching the `travel_extras` optional-step exception, making that branch dead code; reordered so the optional check runs first.
+
+- [x] **Destination TBD dead end** — trip left without a destination (user backed out of quiz/preferences or the AI destination-suggestion flow) routed to `TripResult`, which always failed with `400 Trip destination is required`; "Try again" just repeated the same failing call.  
+  *Files:* `src/pages/HomePage.tsx`, `MyTripsPage.tsx`, `AppDashboardPage.tsx`, `TripResult.tsx`  
+  *Done:* `onSelectTrip`/`onOpenTrip` now pass `hasDestination`; `goToResult`/`openTrip` route to `DestinationPickerPage` (resumes `suggestDestinations`) instead of `TripResult` when a trip has no destination yet. Also fixed "Try again" passing the click event into `loadItinerary` as its options arg.
+
+- [x] **Duplicate itinerary places from concurrent generate calls** — backing out of the generating screen and re-opening the trip from My Trips before the first `POST /trips/generate` finished triggered a second concurrent generate call; both delete-then-insert independently, leaving duplicate places in every day.  
+  *Files:* `backend/app/services/itinerary.py`, `src/pages/TripResult.tsx`  
+  *Done:* `_claim_generation_slot` atomically flips `trip.status` to `"generating"` (3-minute staleness timeout as a safety net if a request crashes mid-generation) before calling the LLM/persisting; a second concurrent call gets `409 Conflict` instead of racing. Frontend (`generateOrWaitForItinerary`) polls `GET /trips/{id}` every 3s on a 409 instead of showing a dead-end error, so the second entry point just waits for the first generation to finish.
+
 ---
 
 ## Polish backlog (not scheduled)
@@ -438,8 +465,8 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
 - [x] **Fix flight card booking links** — individual flight offers share the same Google Flights URL; each card should deep-link to a route-appropriate search (or offer-specific when available).  
   *Done:* Per-offer Google Flights URL uses segment IATA codes (Duffel) or airline name (mock) so each card differs.
 - [ ] **Combine hotels + flights booking question** — optional single preferences step ("Booking links") instead of flights in quiz + hotels in preferences. User undecided; low priority.
-- [ ] **Email validation edge cases** — e.g. `email123@gmail.cos` still passes; stricter TLD/format rules.
-- [ ] **Destination picker TBD bug** — if user exists during AI destination suggestion, destination may be set TBD; "try again" can ask to add destination confusingly.
+- [ ] **Long trips (10–14 nights) intermittently fall back to sample itinerary** — `ITINERARY_MAX_TOKENS` cap (8192, `llm_json.py`) can be hit by verbose LLM output near the max trip length even though the day-count budget formula (`800 + 380/day`) targets well under it; all 3 retries hit the same fixed ceiling so none can recover a truncated response. Reproduced: 14-night trip failed twice (mock fallback), succeeded once (slow). 3-night trips unaffected. **Possible fixes:** raise the ceiling (if model context allows), trim prompt/response verbosity (shorter description field, drop redundant fields), or generate in day-range batches for long trips.
+- [ ] **Google Sign-In** — follow-up to email verification; separate OAuth integration, not started.
 
 ## Deferred (not in refinement sprint)
 
@@ -496,7 +523,7 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
 9. **Consult chat:** Client-side history only; not persisted to DB.
 10. **Maps on result page:** Google Maps deep-links only.
 11. **Typecheck:** `npm run typecheck` needs `typescript` in devDependencies.
-12. **Itinerary speed:** `POST /trips/generate` is LLM-bound; Mapbox geocoding runs in background on result page via `enrich-places`.
+12. **Itinerary speed:** `POST /trips/generate` is LLM-bound; activity maps use Google Maps search links (no per-activity Mapbox geocode on the result page).
 13. **Flights/hotels:** Loaded after itinerary appears (Duffel can be slow; does not block generate spinner).
 14. **Quiz validation:** City/airport must be picked from suggestions when API returns matches; backend re-validates on submit.
 15. **Airport search:** Uses **Duffel** `places/suggestions` (needs `DUFFEL_ACCESS_TOKEN`); Mapbox Search Box airport POI as fallback. Mapbox Geocoding v5 `types=poi` does **not** return airports — do not use for origin.
@@ -506,18 +533,22 @@ Fix **one item at a time**; mark `[x]` when done; note what changed inline or in
 19. **Git:** All work on **`dev`** branch; push to `dev`. Merge `dev` → `main` only when ready to deploy (user merges manually).
 20. **Hotels:** Mapbox Search Box `poi_category=hotel` for real names when ≥3 results; mock fallback otherwise. Prices are tier estimates. Some cities (e.g. Tokyo) have sparse Mapbox hotel POI — mock cards used.
 21. **Flight cards:** Each offer has its own Google Flights deep-link (IATA + airline per offer).
+22. **Email verification:** Register no longer returns a token — user must submit the emailed code (`POST /auth/verify`) first. Without `RESEND_API_KEY` (or on send failure), the code is logged to the backend console instead of emailed.
+23. **Resend sandbox:** `onboarding@resend.dev` only delivers to the Resend account's own email; verify a domain before testing with other real addresses.
+24. **Generate lock:** `trip.status` briefly becomes `"generating"` during `POST /trips/generate` to block concurrent duplicate-place races; self-clears after 3 minutes if a request crashes mid-generation.
 
 ---
 
 ## Handoff — start here in next chat
 
 1. **`git checkout dev && git pull`** — all active work is on `dev`; never push to `main`.
-2. **Test on `dev`:** 7+ night itinerary generate; hotels section (Mapbox real names + Booking links); flight card links.
-3. **When ready:** merge `dev` → `main` on GitHub to deploy (Vercel + Render auto-deploy from `main`).
-4. **Then pick:** multi-city trips, nationality question, Images API, or email validation polish.
-5. Restart backend after pull (quiz seed).
+2. **`RESEND_API_KEY` is set** in local `.env` (sandbox sender `onboarding@resend.dev` — can only deliver to the email on that Resend account; verify a domain before testing with other real addresses or deploying).
+3. **Test on `dev`:** register → verify code flow (including wrong-code/expired/resend-cooldown, using the Resend account's own email since sandbox is still active); 7+ night itinerary generate; hotels section (Mapbox real names + Booking links); flight card links; back-out-and-reopen a generating trip (no duplicates).
+4. **When ready:** merge `dev` → `main` on GitHub to deploy (Vercel + Render auto-deploy from `main`). Set `RESEND_API_KEY`/`RESEND_FROM_EMAIL` on Render too.
+5. **Then pick:** multi-city trips, Google Sign-In, long-trip LLM token ceiling, nationality question, or Images API.
+6. Restart backend after pull (quiz seed + new `users` columns via schema patch).
 
-**Recent session (July 2026):** On `dev` — long-trip itinerary fix (`itinerary_max_tokens` scaling + JSON salvage), per-card flight/hotel Booking links, Mapbox lodging hotel names with mock fallback, and added `docs/project-summary.md` (technical reference with architecture + LLM diagrams). All High/Medium refinements + Quiz redesign confirmed complete.
+**Recent session (July 2026):** On `dev` — email verification via one-time code (Resend, strict flow: register no longer auto-logs-in), fixed the destination-TBD dead end and the duplicate-itinerary-places race condition (concurrent `/trips/generate` calls), fixed the hotels-optional Generate button greyed out, long-trip itinerary fix (`itinerary_max_tokens` scaling + JSON salvage), per-card flight/hotel Booking links, Mapbox lodging hotel names with mock fallback, and added `docs/project-summary.md`. All High/Medium refinements + Quiz redesign confirmed complete.
 
 ---
 
@@ -532,12 +563,14 @@ Stack: React 18 + Vite + Tailwind + FastAPI + PostgreSQL 16 + Gemini/Duffel/Mapb
 Deployed: Vercel (frontend) + Render (API) + Neon (DB). PWA enabled. Prod deploys from `main`.
 
 Done: Phases 0–8 + Refinements + Quiz redesign + airport origin (Duffel).
-On `dev` (not yet merged to main): long-trip itinerary fix (≥6 nights), per-card flight Google Flights links, Mapbox lodging hotels + Booking.com deep-links.
+On `dev` (not yet merged to main): email verification via one-time code (Resend), destination-TBD routing fix, duplicate-places generate race fix, Generate-button bug, long-trip itinerary fix (≥6 nights), per-card flight Google Flights links, Mapbox lodging hotels + Booking.com deep-links.
 
 CURRENT WORK (priority order):
-1. Test `dev` locally (7+ nights, hotels Mapbox, flight links) — then merge `dev` → `main` when ready
-2. Polish backlog: multi-city trips, email validation, destination picker TBD bug
-3. Nice to have: nationality question, Images API (Pexels)
+1. Test `dev` locally (register/verify code flow, 7+ nights, hotels Mapbox, flight links, duplicate-generate race) — then merge `dev` → `main` when ready
+2. Polish backlog: multi-city trips, long-trip LLM token ceiling, combine hotels+flights question
+3. Nice to have: Google Sign-In, nationality question, Images API (Pexels)
+
+Notes on email verification: RESEND_API_KEY is already set locally (sandbox sender onboarding@resend.dev — only delivers to that Resend account's own email; verify a domain before testing other addresses or deploying). Register no longer returns a token — user must submit the emailed/logged code via POST /auth/verify first; login returns 403 if unverified.
 
 Constraints:
 - Work on `dev`: git checkout dev && git pull → commit → git push origin dev

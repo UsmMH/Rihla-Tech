@@ -67,10 +67,13 @@ def _apply_answer_to_trip(trip: TripPlan, question: Question, value) -> None:
     elif key == "travel_extras" and isinstance(value, list):
         extras = {str(item) for item in value}
         trip.include_hotels = "hotels" in extras
+    elif key == "flight_trip_type" and isinstance(value, str):
+        trip.flight_trip_type = value if value in ("round", "one_way") else None
     elif key == "include_flights":
         trip.include_flights = value == "yes" or value is True
         if value != "yes" and value is not True:
             trip.origin = None
+            trip.flight_trip_type = None
     elif key == "include_hotels":
         trip.include_hotels = value == "yes" or value is True
 
@@ -134,6 +137,9 @@ def submit_quiz_answers(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Trip plan not found",
             )
+        from app.services.itinerary import reject_if_generation_in_progress
+
+        reject_if_generation_in_progress(trip)
     else:
         trip = TripPlan(user_id=user.id)
         db.add(trip)
@@ -152,6 +158,7 @@ def submit_quiz_answers(
         }
         if answers_by_key.get("include_flights") != "yes":
             trip.origin = None
+            trip.flight_trip_type = None
 
     if phase == "preferences":
         pace_answer = next(

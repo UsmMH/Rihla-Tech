@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.quiz import TripPlanPublic
 
@@ -90,20 +90,6 @@ class PlaceSearchResult(BaseModel):
     city: str | None = None
 
 
-class ActivityPlaceSearchResult(BaseModel):
-    label: str
-    latitude: float
-    longitude: float
-    mapbox_id: str | None = None
-
-
-class UpdatePlaceLocationRequest(BaseModel):
-    label: str = Field(min_length=1, max_length=255)
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
-    mapbox_id: str | None = Field(default=None, max_length=120)
-
-
 class TripDetailResponse(BaseModel):
     trip_plan: TripPlanPublic
     destination: str
@@ -140,28 +126,6 @@ class TripListItem(BaseModel):
 
 class TripListResponse(BaseModel):
     trips: list[TripListItem]
-
-
-class EditTripRequest(BaseModel):
-    prompt: str = Field(
-        default="Suggest 3 alternative destinations similar to this trip.",
-        min_length=1,
-        max_length=2000,
-    )
-
-
-class TripAlternativePublic(BaseModel):
-    title: str
-    tagline: str
-    highlights: list[str]
-    budget_note: str
-    match_percent: int
-
-
-class EditTripResponse(BaseModel):
-    alternatives: list[TripAlternativePublic]
-    source: str
-    fallback_reason: str | None = None
 
 
 class ChatMessageRequest(BaseModel):
@@ -202,12 +166,26 @@ class ChatMessageResponse(BaseModel):
 
 class ConsultHistoryItem(BaseModel):
     role: str
-    content: str
+    content: str = Field(max_length=2000)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def cap_content(cls, value: object) -> object:
+        if isinstance(value, str) and len(value) > 2000:
+            return value[:2000]
+        return value
 
 
 class ConsultChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
-    history: list[ConsultHistoryItem] = Field(default_factory=list)
+    history: list[ConsultHistoryItem] = Field(default_factory=list, max_length=20)
+
+    @field_validator("history", mode="before")
+    @classmethod
+    def cap_history(cls, value: object) -> object:
+        if isinstance(value, list) and len(value) > 20:
+            return value[-20:]
+        return value
 
 
 class ConsultChatResponse(BaseModel):
@@ -226,6 +204,7 @@ class FlightSegmentPublic(BaseModel):
     duration: str | None = None
     airline: str
     stops: int = 0
+    layovers: list[str] = Field(default_factory=list)
 
 
 class FlightOfferPublic(BaseModel):
@@ -234,19 +213,43 @@ class FlightOfferPublic(BaseModel):
     price: str
     price_note: str | None = None
     price_amount: float | None = None
-    currency: str = "USD"
-    outbound: FlightSegmentPublic
-    inbound: FlightSegmentPublic | None = None
-    booking_url: str | None = None
+    currency: str = "SAR"
+    leg: FlightSegmentPublic
+    can_pick_return: bool = False
+    can_book: bool = False
 
 
 class FlightsResponse(BaseModel):
     offers: list[FlightOfferPublic]
     search_url: str
-    source: str
-    fallback_reason: str | None = None
-    origin_code: str | None = None
-    destination_code: str | None = None
+    source: str  # serpapi | fixture | unavailable
+    unavailable_reason: str | None = None
+    trip_type: str  # round | one_way
+    origin_airport: str | None = None
+    destination_airport: str | None = None
+    traveler_count: int = 1
+    fetched_at: datetime | None = None
+    stale: bool = False
+    refresh_failed: bool = False
+
+
+class TripAirportsUpdate(BaseModel):
+    origin: str | None = Field(default=None, max_length=255)
+    destination: str | None = Field(default=None, max_length=255)
+
+
+class BookingOptionPublic(BaseModel):
+    provider: str
+    price: str
+    url: str
+    post_data: str
+
+
+class BookingResponse(BaseModel):
+    options: list[BookingOptionPublic]
+    fallback_url: str
+    unavailable: bool = False
+    unavailable_reason: str | None = None
 
 
 class HotelOptionPublic(BaseModel):

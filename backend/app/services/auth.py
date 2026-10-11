@@ -14,6 +14,7 @@ _PASSWORD_HAS_LETTER = re.compile(r"[A-Za-z]")
 _PASSWORD_HAS_DIGIT = re.compile(r"\d")
 _EMAIL_BASIC = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _DOMAIN_LABEL = re.compile(r"^[a-zA-Z0-9-]+$")
+_TYPO_EMAIL_DOMAINS = frozenset({"gmail.co", "yahoo.co", "hotmail.co", "outlook.co"})
 
 
 def normalize_email(email: str) -> str:
@@ -39,9 +40,7 @@ def validate_email_format(email: str) -> str:
         if not label or not _DOMAIN_LABEL.fullmatch(label):
             raise ValueError("Enter a valid email address.")
 
-    tld = labels[-1]
-    # Reject likely typos like user@gmail.co (single-label TLD must be 3+ chars).
-    if len(labels) == 2 and len(tld) < 3:
+    if domain.lower() in _TYPO_EMAIL_DOMAINS:
         raise ValueError("Enter a valid email address.")
 
     return cleaned.lower()
@@ -100,8 +99,33 @@ def create_user(
         first_name=first_name,
         last_name=last_name,
         phone_num=phone_num,
+        is_verified=False,
     )
     db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def refresh_unverified_user(
+    db: Session,
+    user: User,
+    *,
+    password: str,
+    first_name: str,
+    last_name: str,
+    phone_num: str | None,
+) -> User:
+    validate_password_format(password)
+    user.password = hash_password(password)
+    user.first_name = first_name
+    user.last_name = last_name
+    user.phone_num = phone_num
+    user.is_verified = False
+    user.verification_code_hash = None
+    user.verification_code_expires_at = None
+    user.verification_attempts = 0
+    user.verification_last_sent_at = None
     db.commit()
     db.refresh(user)
     return user

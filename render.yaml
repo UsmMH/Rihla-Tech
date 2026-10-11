@@ -16,6 +16,8 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "true"
       - key: CORS_ORIGINS
         sync: false
       - key: LLM_PROVIDER
@@ -25,6 +27,18 @@ services:
       - key: MAPBOX_ACCESS_TOKEN
         sync: false
       - key: DUFFEL_ACCESS_TOKEN
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: SERPAPI_API_KEY
+        sync: false
+      - key: SERPAPI_MOCK
+        value: "false"
+      - key: SERPAPI_MONTHLY_CAP
+        value: "210"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
         sync: false
       - key: OPENROUTER_SITE_URL
         sync: false

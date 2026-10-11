@@ -16,7 +16,9 @@ import {
   login as loginRequest,
   logout as logoutRequest,
   register as registerRequest,
+  resendVerificationCode as resendVerificationCodeRequest,
   storeAuth,
+  verifyEmail as verifyEmailRequest,
   type LoginInput,
   type RegisterInput,
   type User,
@@ -28,7 +30,9 @@ type AuthContextValue = {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (input: LoginInput) => Promise<void>;
-  register: (input: RegisterInput) => Promise<void>;
+  register: (input: RegisterInput) => Promise<{ email: string }>;
+  verifyEmail: (email: string, code: string) => Promise<void>;
+  resendVerificationCode: (email: string) => Promise<string>;
   logout: () => void;
 };
 
@@ -66,9 +70,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(async (input: RegisterInput) => {
     const result = await registerRequest(input);
+    return { email: result.email };
+  }, []);
+
+  const verifyEmail = useCallback(async (email: string, code: string) => {
+    const result = await verifyEmailRequest(email, code);
     storeAuth(result.access_token, result.user);
     clearLastPage();
     setUser(result.user);
+  }, []);
+
+  const resendVerificationCode = useCallback(async (email: string) => {
+    const result = await resendVerificationCodeRequest(email);
+    return result.message;
   }, []);
 
   const logout = useCallback(() => {
@@ -83,9 +97,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: user !== null,
       login,
       register,
+      verifyEmail,
+      resendVerificationCode,
       logout,
     }),
-    [user, isLoading, login, register, logout],
+    [user, isLoading, login, register, verifyEmail, resendVerificationCode, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -195,6 +195,7 @@ def validate_quiz_submission(
         wants_flights = answers_by_key.get("include_flights") == "yes"
         if wants_flights:
             required.add("origin")
+            required.add("flight_trip_type")
 
         missing = required - set(answers_by_key.keys())
         if missing:

@@ -35,6 +35,7 @@ export interface TripPlan {
   theme: string | null;
   budget_tier: string | null;
   include_flights: boolean;
+  flight_trip_type: "round" | "one_way" | null;
   include_hotels: boolean;
   status: string;
 }

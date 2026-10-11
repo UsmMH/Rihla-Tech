@@ -1,33 +1,3 @@
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? "";
-
-/** Fetch a walking route polyline between ordered stops; falls back to null. */
-export async function fetchWalkingRoute(
-  coordinates: [number, number][],
-): Promise<[number, number][] | null> {
-  if (!MAPBOX_TOKEN || coordinates.length < 2) {
-    return null;
-  }
-
-  const path = coordinates.map(([lng, lat]) => `${lng},${lat}`).join(";");
-  const url =
-    `https://api.mapbox.com/directions/v5/mapbox/walking/${path}` +
-    `?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      return null;
-    }
-    const data = (await response.json()) as {
-      routes?: Array<{ geometry?: { coordinates?: [number, number][] } }>;
-    };
-    const line = data.routes?.[0]?.geometry?.coordinates;
-    return line && line.length >= 2 ? line : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Build a maps search query from venue name + trip destination (no API key). */
 function activityMapsQuery(venueName: string, destination: string): string {
   return `${venueName} ${destination}`.trim();

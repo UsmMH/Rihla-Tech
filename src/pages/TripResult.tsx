@@ -14,9 +14,98 @@ import {
   googleMapsSearchUrl,
 } from "@/lib/mapDirections";
 import { dayPinColor, getActivityTypeStyle } from "@/lib/activityType";
-import { enrichTripPlaces, generateTrip, getTrip, getTripFlights, getTripHotels, saveLastTripId, tripHasItineraryActivities, type DayItinerary, type FlightOffer, type FlightsResult, type HotelsResult, type TripActivity, type TripDetail } from "@/lib/trips";
+import {
+  generateTrip,
+  getFlightBookingOptions,
+  getReturnFlights,
+  getTrip,
+  getTripHotels,
+  loadTripFlights,
+  resolveFlightTripType,
+  saveLastTripId,
+  submitFlightBookingOption,
+  tripHasItineraryActivities,
+  type DayItinerary,
+  type FlightOffer,
+  type FlightsResult,
+  type HotelsResult,
+  type TripActivity,
+  type TripDetail,
+} from "@/lib/trips";
 import { shareTrip, unshareTrip } from "@/lib/community";
 import type { AppTab } from "@/lib/navigation";
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+const GENERATE_POLL_MS = 3000;
+const GENERATE_POLL_MAX_MS = 6 * 60 * 1000;
+
+// Backend returns 409 when another request is already generating this trip's
+// itinerary (e.g. user backed out and re-opened the trip before the first
+// attempt finished). Poll until it completes instead of surfacing a dead-end
+// error that would otherwise require a manual retry.
+async function waitForItineraryReady(tripPlanId: number, signal?: AbortSignal): Promise<TripDetail> {
+  const started = Date.now();
+  while (Date.now() - started < GENERATE_POLL_MAX_MS) {
+    await sleep(GENERATE_POLL_MS, signal);
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    try {
+      const trip = await getTrip(tripPlanId);
+      if (signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      if (tripHasItineraryActivities(trip) || trip.source === "mock") {
+        return trip;
+      }
+      if (trip.trip_plan.status !== "generating") {
+        throw new ApiError(409, "Itinerary generation stopped before it finished. Please try again.");
+      }
+    } catch (err: unknown) {
+      if (isAbortError(err)) {
+        throw err;
+      }
+      if (!(err instanceof ApiError) || err.status !== 404) {
+        throw err;
+      }
+      throw new ApiError(409, "Itinerary generation stopped before it finished. Please try again.");
+    }
+  }
+  throw new ApiError(409, "Itinerary generation is taking longer than expected. Please try again.");
+}
+
+async function generateOrWaitForItinerary(tripPlanId: number, signal?: AbortSignal): Promise<TripDetail> {
+  try {
+    return await generateTrip(tripPlanId);
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.status === 409) {
+      return waitForItineraryReady(tripPlanId, signal);
+    }
+    throw err;
+  }
+}
 
 type TripResultProps = {
   tripPlanId: number;
@@ -36,16 +125,35 @@ function starsLabel(count: number): string {
 
 function flightsSummary(flights: FlightsResult): string {
   const count = flights.offers.length;
-  if (count === 0) return "No options found";
-  const prices = flights.offers
-    .map((o) => o.price_amount)
-    .filter((p): p is number => p != null);
-  const cheapest = prices.length ? Math.min(...prices) : null;
+  if (count === 0) {
+    switch (flights.unavailable_reason) {
+      case "not_configured":
+      case "quota":
+      case "user_limit":
+      case "error":
+        return "Live prices unavailable";
+      case "no_airport":
+        return "Airport needed — use Google Flights";
+      case "no_dates":
+        return "Add trip dates to search flights";
+      case "no_results":
+        return "No flights found for these dates";
+      default:
+        return "No options found";
+    }
+  }
+  let cheapest: number | null = null;
+  let currency = "SAR";
+  for (const offer of flights.offers) {
+    if (offer.price_amount == null) continue;
+    if (cheapest == null || offer.price_amount < cheapest) {
+      cheapest = offer.price_amount;
+      currency = offer.currency || currency;
+    }
+  }
   const prefix = count === 1 ? "1 option" : `${count} options`;
-  const basis = flights.offers[0]?.price_note;
-  const pricePart = cheapest != null ? `from ${flights.offers[0]?.currency ?? "USD"} ${cheapest}` : "";
-  if (!pricePart) return prefix;
-  return basis ? `${prefix} · ${pricePart} (${basis.toLowerCase()})` : `${prefix} · ${pricePart}`;
+  if (cheapest == null) return prefix;
+  return `${prefix} · from ${currency} ${cheapest}`;
 }
 
 function hotelsSummary(hotels: HotelsResult): string {
@@ -154,18 +262,96 @@ function CollapsiblePanel({
   );
 }
 
-function FlightOfferCard({ offer, theme }: { offer: FlightOffer; theme: ReturnType<typeof useTheme>["theme"] }) {
+function flightCardButtonStyle(theme: ReturnType<typeof useTheme>["theme"], primary = false) {
+  return {
+    background: primary ? `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})` : "transparent",
+    color: primary ? "#fff" : theme.accentSky,
+    border: primary ? "none" : `1px solid ${theme.accentSky}`,
+    fontFamily: "system-ui, sans-serif",
+    fontWeight: 600,
+    textDecoration: "none",
+  } as const;
+}
+
+function formatFlightPrice(price: string, priceAmount: number | null): string {
+  if (priceAmount != null) return price;
+  if (/SAR\s*[—–-]/i.test(price) || price.trim() === "SAR —") {
+    return "Price on Google";
+  }
+  return price;
+}
+
+function FlightOfferCard({
+  offer,
+  tripPlanId,
+  searchUrl,
+  theme,
+  selected = false,
+  selectable = false,
+  onSelect,
+}: {
+  offer: FlightOffer;
+  tripPlanId: number;
+  searchUrl: string | null | undefined;
+  theme: ReturnType<typeof useTheme>["theme"];
+  selected?: boolean;
+  selectable?: boolean;
+  onSelect?: () => void;
+}) {
+  const [bookingBusy, setBookingBusy] = useState(false);
+  const displayPrice = formatFlightPrice(offer.price, offer.price_amount);
+
+  async function handleBook() {
+    if (bookingBusy) return;
+    setBookingBusy(true);
+    try {
+      const booking = await getFlightBookingOptions(tripPlanId, offer.id);
+      if (booking.options.length > 0) {
+        submitFlightBookingOption(booking.options[0]);
+      } else if (booking.fallback_url) {
+        window.open(booking.fallback_url, "_blank", "noopener,noreferrer");
+      }
+    } catch {
+      if (searchUrl) {
+        window.open(searchUrl, "_blank", "noopener,noreferrer");
+      }
+    } finally {
+      setBookingBusy(false);
+    }
+  }
+
+  const googleUrl = offer.booking_url || searchUrl;
+
+  const borderColor = selected ? theme.accentSky : theme.activityCardBorder;
+
   return (
     <div
-      className="rounded-xl p-3.5 flex flex-col flex-shrink-0 snap-start w-[min(85vw,280px)]"
-      style={{ background: theme.activityCardBg, border: `1px solid ${theme.activityCardBorder}` }}
+      role={selectable ? "button" : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      onClick={selectable ? onSelect : undefined}
+      onKeyDown={
+        selectable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect?.();
+              }
+            }
+          : undefined
+      }
+      className={`rounded-xl p-3.5 flex flex-col flex-shrink-0 snap-start w-[min(85vw,280px)]${selectable ? " cursor-pointer" : ""}`}
+      style={{
+        background: theme.activityCardBg,
+        border: `2px solid ${borderColor}`,
+        boxShadow: selected ? `0 0 0 1px ${theme.accentSky}33` : undefined,
+      }}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
         <p style={{ fontFamily: "'DM Serif Display', serif", color: theme.activityHeading, fontSize: "0.95rem", lineHeight: 1.2 }}>
           {offer.airline}
         </p>
         <span style={{ color: theme.accentSky, fontWeight: 700, fontSize: "0.85rem", fontFamily: "system-ui, sans-serif", flexShrink: 0, textAlign: "right" }}>
-          {offer.price}
+          {displayPrice}
         </span>
       </div>
       {offer.price_note && (
@@ -180,24 +366,34 @@ function FlightOfferCard({ offer, theme }: { offer: FlightOffer; theme: ReturnTy
       <p className="flex-1" style={{ color: theme.activityBody, fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.45 }}>
         {offer.outbound.duration ?? "—"} · {stopsLabel(offer.outbound.stops)}
       </p>
-      {offer.booking_url && (
-        <a
-          href={offer.booking_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 inline-flex items-center justify-center gap-1 w-full px-2 py-2 rounded-lg text-xs"
-          style={{
-            background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`,
-            color: "#fff",
-            fontFamily: "system-ui, sans-serif",
-            fontWeight: 600,
-            textDecoration: "none",
-          }}
-        >
-          Google Flights
-          <ExternalLink size={10} />
-        </a>
-      )}
+      <div className="mt-3 flex flex-col gap-2">
+        {offer.can_book && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleBook();
+            }}
+            disabled={bookingBusy}
+            className="inline-flex items-center justify-center gap-1 w-full px-2 py-2 rounded-lg text-xs cursor-pointer disabled:opacity-60"
+            style={flightCardButtonStyle(theme, true)}
+          >
+            {bookingBusy ? "Loading…" : "Book this flight"}
+          </button>
+        )}
+        {!offer.can_book && !offer.can_pick_return && googleUrl && (
+          <a
+            href={googleUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-1 w-full px-2 py-2 rounded-lg text-xs"
+            style={flightCardButtonStyle(theme, true)}
+          >
+            View on Google Flights
+            <ExternalLink size={10} />
+          </a>
+        )}
+      </div>
     </div>
   );
 }
@@ -312,6 +508,9 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   const [flights, setFlights] = useState<FlightsResult | null>(null);
   const [hotels, setHotels] = useState<HotelsResult | null>(null);
   const [flightsLoading, setFlightsLoading] = useState(false);
+  const [returnFlights, setReturnFlights] = useState<FlightsResult | null>(null);
+  const [selectedOutboundId, setSelectedOutboundId] = useState<string | null>(null);
+  const [returnLoading, setReturnLoading] = useState(false);
   const [hotelsLoading, setHotelsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingPhase, setLoadingPhase] = useState<"fetch" | "generate">("fetch");
@@ -320,10 +519,11 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
   const [shareOpen, setShareOpen] = useState(false);
   const [shareCaption, setShareCaption] = useState("");
   const [shareBusy, setShareBusy] = useState(false);
-  const enrichStarted = useRef(false);
   const itineraryRetryRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
-  const loadItinerary = useCallback(async (options?: { forceGenerate?: boolean }) => {
+  const loadItinerary = useCallback(async (options?: { forceGenerate?: boolean; signal?: AbortSignal }) => {
+    const signal = options?.signal ?? loadAbortRef.current?.signal;
     setLoading(true);
     setError(null);
     setItineraryError(null);
@@ -334,6 +534,9 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
         setLoadingPhase("fetch");
         try {
           const existing = await getTrip(tripPlanId);
+          if (signal?.aborted) {
+            return;
+          }
           if (tripHasItineraryActivities(existing)) {
             setTrip(existing);
             return;
@@ -346,10 +549,16 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
       }
 
       setLoadingPhase("generate");
-      let result = await generateTrip(tripPlanId);
+      let result = await generateOrWaitForItinerary(tripPlanId, signal);
+      if (signal?.aborted) {
+        return;
+      }
       if (!tripHasItineraryActivities(result) && itineraryRetryRef.current < 1) {
         itineraryRetryRef.current += 1;
-        result = await generateTrip(tripPlanId);
+        result = await generateOrWaitForItinerary(tripPlanId, signal);
+        if (signal?.aborted) {
+          return;
+        }
       }
 
       setTrip(result);
@@ -357,9 +566,14 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
         setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
       }
     } catch (err: unknown) {
+      if (isAbortError(err) || signal?.aborted) {
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Failed to load trip");
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }, [tripPlanId]);
 
@@ -368,23 +582,36 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
     setLoading(true);
     setLoadingPhase("generate");
     setError(null);
+    const signal = loadAbortRef.current?.signal;
     try {
-      const result = await generateTrip(tripPlanId);
+      const result = await generateOrWaitForItinerary(tripPlanId, signal);
+      if (signal?.aborted) {
+        return;
+      }
       setTrip(result);
       if (!tripHasItineraryActivities(result)) {
         setItineraryError("We couldn't build your day-by-day itinerary. Please try again.");
       }
     } catch (err: unknown) {
+      if (isAbortError(err) || signal?.aborted) {
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Failed to generate itinerary");
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }, [tripPlanId]);
 
   useEffect(() => {
-    enrichStarted.current = false;
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
     saveLastTripId(tripPlanId);
-    loadItinerary();
+    void loadItinerary({ signal: ac.signal });
+    return () => {
+      ac.abort();
+    };
   }, [loadItinerary, tripPlanId]);
 
   useEffect(() => {
@@ -392,12 +619,17 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
 
     if (trip.trip_plan.include_flights) {
       setFlightsLoading(true);
-      getTripFlights(tripPlanId)
+      setReturnFlights(null);
+      setSelectedOutboundId(null);
+      const flightType = resolveFlightTripType(trip.trip_plan);
+      loadTripFlights(tripPlanId, flightType)
         .then(setFlights)
         .catch(() => setFlights(null))
         .finally(() => setFlightsLoading(false));
     } else {
       setFlights(null);
+      setReturnFlights(null);
+      setSelectedOutboundId(null);
     }
 
     if (trip.trip_plan.include_hotels) {
@@ -411,16 +643,21 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
     }
   }, [trip, tripPlanId]);
 
-  useEffect(() => {
-    if (!trip?.geocoding_configured || enrichStarted.current) return;
-    const activityCount = trip.itinerary.reduce((sum, day) => sum + day.activities.length, 0);
-    if (activityCount === 0 || trip.places_geocoded >= activityCount) return;
+  async function handleLoadReturnFlights() {
+    if (!selectedOutboundId) return;
+    setReturnLoading(true);
+    try {
+      const returns = await getReturnFlights(tripPlanId, selectedOutboundId);
+      setReturnFlights(returns);
+    } catch {
+      setReturnFlights(null);
+    } finally {
+      setReturnLoading(false);
+    }
+  }
 
-    enrichStarted.current = true;
-    enrichTripPlaces(tripPlanId)
-      .then(setTrip)
-      .catch(() => {});
-  }, [trip, tripPlanId]);
+  const flightTripType = trip ? resolveFlightTripType(trip.trip_plan) : "round";
+  const isRoundTripFlights = flightTripType === "round";
 
   async function handleShare() {
     if (!trip || shareBusy) return;
@@ -461,7 +698,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
         <PlanningBackHeader onBack={onBack} />
         <TripPlanningLoader
           title={loadingPhase === "fetch" ? "Loading your trip..." : "Generating your AI itinerary..."}
-          subtitle={loadingPhase === "generate" ? "This can take up to a minute while we build your personalized plan." : undefined}
+          subtitle={loadingPhase === "generate" ? "Still generating your itinerary. Longer trips can take several minutes." : undefined}
         />
       </div>
     );
@@ -481,7 +718,7 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={loadItinerary}
+              onClick={() => loadItinerary()}
               className="px-4 py-2.5 rounded-xl"
               style={{ background: `linear-gradient(135deg, ${theme.accentDeep}, ${theme.accentMid})`, color: "#fff", border: "none", fontFamily: "system-ui, sans-serif" }}
             >
@@ -615,15 +852,95 @@ export default function TripResult({ tripPlanId, onBack, onNavigate }: TripResul
                 title="Flights"
                 summary={flights ? flightsSummary(flights) : "Searching…"}
                 loading={flightsLoading}
-                externalUrl={flights?.search_url}
-                externalLabel="Search all on Google Flights"
+                externalUrl={flights && flights.offers.length === 0 ? flights.search_url : undefined}
+                externalLabel="Search on Google Flights"
               >
                 {flights && (
-                  <HorizontalCardRow>
-                    {flights.offers.map((offer) => (
-                      <FlightOfferCard key={offer.id} offer={offer} theme={theme} />
-                    ))}
-                  </HorizontalCardRow>
+                  <>
+                    <p
+                      className="mb-2 mt-1 text-xs"
+                      style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}
+                    >
+                      {isRoundTripFlights
+                        ? "Outbound — tap a card, then find return flights"
+                        : "Flights — tap Book on a card to checkout"}
+                    </p>
+                    <HorizontalCardRow>
+                      {flights.offers.map((offer) => (
+                        <FlightOfferCard
+                          key={offer.id}
+                          offer={offer}
+                          tripPlanId={tripPlanId}
+                          searchUrl={flights.search_url}
+                          theme={theme}
+                          selectable={isRoundTripFlights && Boolean(offer.can_pick_return)}
+                          selected={selectedOutboundId === offer.id}
+                          onSelect={() => {
+                            setSelectedOutboundId(offer.id);
+                            setReturnFlights(null);
+                          }}
+                        />
+                      ))}
+                    </HorizontalCardRow>
+                    {isRoundTripFlights && (
+                      <button
+                        type="button"
+                        disabled={!selectedOutboundId || returnLoading}
+                        onClick={() => void handleLoadReturnFlights()}
+                        className="mt-3 inline-flex items-center justify-center gap-1 w-full sm:w-auto px-4 py-2.5 rounded-lg text-sm cursor-pointer disabled:opacity-50"
+                        style={flightCardButtonStyle(theme, true)}
+                      >
+                        {returnLoading ? "Loading return flights…" : "Find return flights"}
+                      </button>
+                    )}
+                    {isRoundTripFlights && returnFlights && (
+                      <div className="mt-4">
+                        <p
+                          className="mb-2 text-xs"
+                          style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}
+                        >
+                          Return options — tap Book on your choice
+                        </p>
+                        {returnFlights.offers.length > 0 && (
+                          <HorizontalCardRow>
+                            {returnFlights.offers.map((offer) => (
+                              <FlightOfferCard
+                                key={offer.id}
+                                offer={offer}
+                                tripPlanId={tripPlanId}
+                                searchUrl={returnFlights.search_url || flights.search_url}
+                                theme={theme}
+                              />
+                            ))}
+                          </HorizontalCardRow>
+                        )}
+                        {returnFlights.offers.length === 0 && (
+                          <a
+                            href={returnFlights.search_url || flights.search_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-sm"
+                            style={{ color: theme.accentSky, fontFamily: "system-ui, sans-serif", fontWeight: 600 }}
+                          >
+                            No returns loaded — search on Google Flights
+                            <ExternalLink size={12} />
+                          </a>
+                        )}
+                      </div>
+                    )}
+                    {flights.search_url && flights.offers.length > 0 && (
+                      <a
+                        href={flights.search_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 mt-4 text-xs"
+                        style={{ color: theme.muted, fontFamily: "system-ui, sans-serif" }}
+                      >
+                        Browse all results on Google Flights
+                        <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </>
                 )}
               </CollapsiblePanel>
             )}

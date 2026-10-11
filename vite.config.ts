@@ -13,9 +13,6 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  optimizeDeps: {
-    include: ["mapbox-gl"],
-  },
   server: {
     host: true,
     proxy: {

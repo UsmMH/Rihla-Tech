@@ -18,3 +18,8 @@ class MapboxStatusResponse(BaseModel):
 
 class DuffelStatusResponse(BaseModel):
     configured: bool
+
+
+class SerpApiStatusResponse(BaseModel):
+    configured: bool
+    mock: bool

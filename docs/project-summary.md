@@ -44,8 +44,7 @@ over a REST API prefixed with `/api`, sending a JWT bearer token. The backend ow
 all business logic and is the **only** thing that talks to Postgres and to the LLM.
 External booking/navigation services (Google Maps, Google Flights, Booking.com) are
 reached via **deep-links built client-side** — no SDK, no API key, no server round-trip.
-Mapbox and Duffel are called from the backend; Mapbox Directions (walking polyline)
-is the one external API the frontend calls directly (optional, `VITE_MAPBOX_ACCESS_TOKEN`).
+Mapbox and Duffel are called from the backend only.
 
 ```mermaid
 flowchart TB
@@ -160,13 +159,10 @@ flowchart TD
     GET -->|404 not generated| GEN["POST /api/trips/generate (LLM)"]
     GET -->|200| SHOW
     GEN --> SHOW["Show days + collapsible flights/hotels"]
-    SHOW --> ENRICH["Background: POST /api/trips/{id}/enrich-places (Mapbox geocode)"]
     SHOW --> FH["If include_flights/hotels:<br/>GET /flights, GET /hotels"]
 ```
 
-Key detail: `POST /trips/generate` is LLM-bound and blocks the loader; Mapbox
-geocoding of activity pins is **deferred** to a background `enrich-places` call on the
-result page so it doesn't slow the perceived generate time. `TripResult` distinguishes
+Key detail: `POST /trips/generate` is LLM-bound and blocks the loader. `TripResult` distinguishes
 loading copy: "Loading your trip…" on the `GET` path vs. generation copy on the `POST
 /generate` path, and auto-retries generate once if days come back empty
 (`tripHasItineraryActivities`).
@@ -204,7 +200,7 @@ flowchart TD
 ```
 
 Shared itineraries are **read-only** for viewers (rendered via the same
-`_build_response` used for the owner's trip). Votes and saves are unique per
+`build_trip_response` used for the owner's trip). Votes and saves are unique per
 (trip, user) — the endpoints toggle a row in `trip_votes` / `trip_saves`.
 
 ### 4d. Ask AI (consult chat, no trip)
@@ -231,14 +227,14 @@ Consult chat is **stateless server-side**: the client sends the last ~10 message
 The LLM layer is a **layered provider-adapter architecture**, not a single client call
 sprinkled around the codebase. There are three tiers:
 
-1. **Feature services** (`itinerary`, `destinations`, `edit`, `chat`, `apply_edit`,
+1. **Feature services** (`itinerary`, `destinations`, `chat`, `apply_edit`,
    `consult_chat`) — each builds its own task-specific prompt, owns a deterministic
-   **mock fallback**, and expects a specific output shape. They all share prompt
-   context from `destinations._trip_context(trip)` (preferences → text block).
+   **mock fallback**, and expects a specific output shape. They share prompt
+   context from `destinations.trip_context(trip)` (preferences → text block).
 2. **Provider adapter** (`llm.py`) — the single choke point. It hides Gemini /
    OpenRouter / OpenAI behind one `openai.OpenAI` client by swapping `base_url` (+
-   headers), so every consumer calls the identical `client.chat.completions.create(...)`
-   regardless of provider. Consumers first gate on `llm_configured()`.
+   headers). Consumers call `complete_chat(...)` for shared timeout/retry handling.
+   Consumers first gate on `llm_configured()`.
 3. **Resilience + parsing** (`llm_json.py`) — shared error classification
    (`is_retryable_llm_error`), token-budget scaling (`itinerary_max_tokens`), and JSON
    extraction/salvage (`parse_llm_json_array`, `parse_llm_json_object`,
@@ -254,27 +250,25 @@ flowchart TB
         direction LR
         ITIN["itinerary.py<br/>_ai_itinerary<br/>→ day-by-day JSON"]
         DEST["destinations.py<br/>_ai_suggestions<br/>→ 3 cities"]
-        EDIT["edit.py<br/>_ai_alternatives<br/>→ 3 alt destinations"]
         CHAT["chat.py<br/>chat_with_trip<br/>→ reply + proposes_edit"]
         APPLY["apply_edit.py<br/>apply_itinerary_edit<br/>→ updates[]"]
         CONSULT["consult_chat.py<br/>consult_chat<br/>→ plain text"]
     end
 
-    CTX["destinations._trip_context(trip)<br/>preferences → prompt context"]
+    CTX["destinations.trip_context(trip)<br/>preferences → prompt context"]
     ITIN -.-> CTX
     DEST -.-> CTX
-    EDIT -.-> CTX
     CHAT -.-> CTX
     APPLY -.-> CTX
     CHAT -->|"user confirms / Apply"| APPLY
 
     subgraph Adapter["llm.py — provider adapter (choke point)"]
         CFG["llm_configured()<br/>get_llm_provider() / get_llm_model()"]
-        CLIENT["get_llm_client()<br/>→ openai.OpenAI (base_url swapped)"]
+        CLIENT["complete_chat()<br/>→ openai.OpenAI (base_url swapped)"]
     end
 
     Consumers -->|"1 · gate"| CFG
-    Consumers -->|"2 · chat.completions.create(model, messages, temp, max_tokens)"| CLIENT
+    Consumers -->|"2 · complete_chat(messages, temp, max_tokens, timeout)"| CLIENT
 
     CLIENT --> SDK["OpenAI SDK — one call shape"]
     SDK --> GEMINI["Gemini<br/>generativelanguage.../openai/<br/>gemini-2.5-flash"]
@@ -302,7 +296,7 @@ flowchart TB
 
 **How to read it:** solid arrows are the call/data path; dotted arrows show shared
 prompt context. The `chat → apply_edit` edge is the propose/apply handoff (see below).
-Note `consult_chat` returns plain text (no JSON parsing), while the other five expect
+Note `consult_chat` returns plain text (no JSON parsing), while the other four expect
 structured JSON and therefore route through `llm_json.py`.
 
 ### How the LLM is called (`services/llm.py`)
@@ -317,39 +311,36 @@ Provider differences are just base URL + model + headers:
 - **OpenRouter:** `base_url = https://openrouter.ai/api/v1`, model `openai/gpt-4o-mini`, plus `HTTP-Referer` / `X-Title` headers.
 - **OpenAI:** default base URL, model hard-coded to `gpt-4o-mini`.
 
-Helpers: `llm_configured()`, `get_llm_provider()`, `get_llm_model()`, `get_llm_client()`
-(returns `None` if no key → callers fall back to mock content). Provider/model are
-surfaced at `GET /api/health/llm`.
+Helpers: `llm_configured()`, `get_llm_provider()`, `get_llm_model()`, `complete_chat()`
+(raises `LLMError` if no key or retries exhausted → callers fall back to mock content).
+Provider/model are surfaced at `GET /api/health/llm`.
 
 ### `services/itinerary.py` — step by step
 
 `generate_itinerary(db, user, trip_plan_id)` is the entry point behind
 `POST /trips/generate`:
 
-1. Load the trip for the user (`_get_trip_for_user`); 400 if no destination.
-2. If `llm_configured()`, call `_ai_itinerary(trip)`; on any exception, log and fall
+1. Load the trip for the user (`get_owned_trip`); 400 if no destination.
+2. Claim a generation lock (`status="generating"`) so concurrent generate calls get 409.
+3. If `llm_configured()`, call `_ai_itinerary(trip)` via `complete_chat`; on any exception, log and fall
    back to `_mock_itinerary(trip)` (source becomes `"mock"`, `fallback_reason` set).
-3. `_ai_itinerary`:
-   - Compute `num_days` via `_trip_day_count` (clamped 1–14; defaults to 3 if dates missing).
+4. `_ai_itinerary`:
+   - Compute `num_days` via `trip_day_count` (clamped 1–14; defaults to 3 if dates missing).
    - Build a strict JSON prompt demanding **real venue names** (no "walking tour",
-     "sunset viewpoint"), exactly `num_days` days × 3 activities (morning/afternoon/evening),
-     and lat/lng per activity. Preferences injected via `_trip_context` (from `destinations.py`).
-   - Retry loop (up to 3): call the model with a scaled `max_tokens` (see below),
-     then `parse_llm_itinerary_object(content, expected_days=num_days)`. Retries only
-     on retryable errors (`is_retryable_llm_error`: 429/503/rate/quota/JSON/truncation).
-4. `_persist_itinerary(db, trip, payload)`:
-   - Delete existing `places` for the trip.
-   - Resolve the destination center once via Mapbox (`_resolve_destination_center`).
-   - For each activity: normalize the time slot, prefer `map_search` as the canonical
-     venue name, and resolve coordinates through `resolve_place_coordinates` (Search
-     Box POI → legacy geocoding → validated LLM-provided coords as last resort).
-   - Insert `Place` rows.
-5. Set `trip.status = "itinerary_generated"`, `trip.itinerary_source = provider`, commit.
-6. `_build_response` groups places by day into `DayItineraryPublic`, builds `map_pins`
+     "sunset viewpoint"), exactly `num_days` days × 3 activities (morning/afternoon/evening).
+     Preferences injected via `trip_context` (from `destinations.py`).
+   - `complete_chat` retries (up to 3) with scaled `max_tokens`, then
+     `parse_llm_itinerary_object(content, expected_days=num_days)`. Retries on
+     retryable errors (`is_retryable_llm_error`: HTTP 429/503, quota, JSON/truncation).
+5. `_persist_itinerary(db, trip, payload)`:
+   - `SELECT … FOR UPDATE` on the trip row, delete existing `places`, insert new rows
+     (`latitude`/`longitude` left null; maps use Google search links in the UI).
+6. Set `trip.status = "itinerary_generated"`, `trip.itinerary_source = provider`, commit.
+7. `build_trip_response` groups places by day into `DayItineraryPublic`, builds `map_pins`
    (only places with coords), and returns `GenerateTripResponse`.
 
-`GET /trips/{id}` (`get_trip_detail`) reuses `_build_response`, and if Mapbox is
-configured and pins are missing/out-of-range it runs `enrich_trip_places` inline.
+`GET /trips/{id}` (`get_trip_detail`) reuses `build_trip_response`. While generation is
+in progress it returns an empty itinerary with `source="generating"`.
 
 ### `max_tokens` scaling for long trips (`services/llm_json.py`)
 
@@ -389,13 +380,9 @@ Two services and two endpoints:
   refinements target the **same** activity.
 - **`services/apply_edit.py`** (`POST /trips/{id}/apply-edit`, also called internally):
   sends the itinerary with `place_id`s and the instruction, asks the LLM for an
-  `updates: [{ place_id, name, map_search, lat, lng, ... }]` payload, mutates matching
-  `Place` rows, re-geocodes changed places, and returns the refreshed `TripDetail`.
+  `updates: [{ place_id, name, map_search, ... }]` payload, mutates matching
+  `Place` rows, and returns the refreshed `TripDetail`.
   The optional `chat_message_id` marks that chat message as applied (`mark_chat_edit_applied`).
-
-There's also `services/edit.py` (`POST /trips/{id}/edit`) — a **different** feature that
-returns 3 alternative *destinations* (not itinerary edits), used by the "explore
-alternatives" UI.
 
 ### Consult chat vs. trip chat
 
@@ -518,8 +505,8 @@ erDiagram
   (see `theme_preferences.py`, `encode/decode_theme_preferences`). This avoids adding
   columns for the preferences redesign.
 - `origin` is nulled server-side when `include_flights` is not "yes" (in `quiz.py`).
-- `places.location_confirmed = true` means the user manually pinned the location on the
-  map; geocoding then **skips** it (`place_needs_geocode` / `enrich_trip_places`).
+- `places.location_confirmed` remains on the schema for legacy rows; new itineraries do
+  not run server-side activity geocoding.
 - `trip_votes` and `trip_saves` have a `UniqueConstraint(trip_plan_id, user_id)` — the
   endpoints toggle (insert/delete) rather than increment.
 - Everything cascades on user/trip delete (`ondelete="CASCADE"` + relationship cascades).
@@ -532,7 +519,6 @@ erDiagram
 | Preferences submit | more `quiz_responses`; `theme` encoded; `status="preferences_complete"` |
 | Destination suggest/select | `trip_plans.destination` set, `status` progresses |
 | Generate | old `places` deleted, new `places` inserted; `status="itinerary_generated"`, `itinerary_source` set |
-| Background enrich | `places.latitude/longitude` updated |
 | Trip chat | `chat_messages` rows (user + assistant) |
 | Apply edit | `places` rows mutated |
 | Share | `trip_plans.is_shared/share_caption/shared_at` set |
@@ -548,16 +534,10 @@ Backend-only, one public `pk.…` token (`MAPBOX_ACCESS_TOKEN`). Two APIs:
   destination step (`search_places`, `types=place,locality,region`), destination
   centering (`geocode_destination`), and reverse country lookup. City labels are
   normalized to `"City, Country"` and de-`Al-`'d (`_normalize_city_label`).
-- **Search Box v1** (`.../search/searchbox/v1/forward`): POI resolution for activities
-  (`search_activity_places`), lodging POIs for hotels (`_searchbox_lodging_results`,
-  `poi_category=hotel`), and airport POIs (`_searchbox_airport_results`,
-  `poi_category=airport`, used only as a fallback to Duffel).
+- **Search Box v1** (`.../search/searchbox/v1/forward`): lodging POIs for hotels
+  (`search_lodging_hotels`, `poi_category=hotel`), and airport POIs (`_searchbox_forward`
+  with `poi_category=airport`, used as a fallback to Duffel).
 
-Activity geocoding is a **scored match** (`_score_feature` / `_score_searchbox_result`):
-token overlap with the venue name, distance from destination center (≤40 km),
-country match, POI bonus, minimum score `0.38`, and rejection of pins too close to the
-city center (bad matches). Resolution order in `resolve_place_coordinates`:
-Search Box POI → legacy geocoding → validated LLM-provided coords.
 Gotcha (documented in code): Geocoding v5 `types=poi` does **not** return airports, so
 airport search must not use it. Status: `GET /api/health/mapbox`.
 
@@ -596,15 +576,12 @@ No hotel API. Two sources:
 (`googleMapsSearchUrl` → `.../maps/search/?api=1&query=`), per-leg directions
 (`googleMapsLegUrl`), and a per-day multi-stop route (`googleMapsDayRouteUrl`, capped at
 Google's ~9 waypoints / 11 stops, with `dayRouteExceedsWaypointLimit` guarding the UI).
-Separately, `fetchWalkingRoute` calls the Mapbox Directions API directly from the
-browser (needs `VITE_MAPBOX_ACCESS_TOKEN`) just to draw a walking polyline — optional
-and degrades to `null`.
 
 ### OpenRouter / LLM provider switching
 Covered in §5. Summary: `LLM_PROVIDER` in `.env` (`auto`/`gemini`/`openrouter`/`openai`)
 picks the provider; `auto` falls through Gemini → OpenRouter → OpenAI based on which key
 exists. Because all three are called through the OpenAI SDK with a swapped `base_url`,
-the rest of the code (`itinerary`, `chat`, `edit`, `destinations`) is provider-agnostic.
+the rest of the code (`itinerary`, `chat`, `destinations`, `apply_edit`) is provider-agnostic.
 
 ---
 

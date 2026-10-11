@@ -9,7 +9,7 @@ import type { AppTab } from "@/lib/navigation";
 import { deleteTrip, listTrips, type TripListItem } from "@/lib/trips";
 
 type MyTripsPageProps = {
-  onSelectTrip: (tripPlanId: number) => void;
+  onSelectTrip: (tripPlanId: number, hasDestination: boolean) => void;
   onNewTrip: () => void;
   onHome: () => void;
   onNavigate: (tab: AppTab) => void;
@@ -173,7 +173,7 @@ export default function MyTripsPage({ onSelectTrip, onNewTrip, onHome, onNavigat
               >
                 <button
                   type="button"
-                  onClick={() => onSelectTrip(trip.id)}
+                  onClick={() => onSelectTrip(trip.id, Boolean(trip.destination))}
                   className="flex items-center gap-4 flex-1 min-w-0 text-left cursor-pointer"
                   style={{ background: "none", border: "none", padding: 0 }}
                 >

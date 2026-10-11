@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, EmailStr, Field, field_validator
 
 from app.services.auth import (
     PASSWORD_MAX_LENGTH,
@@ -10,6 +11,15 @@ from app.services.auth import (
 )
 
 
+def _normalize_email(value: object) -> object:
+    if isinstance(value, str):
+        return validate_email_format(value)
+    return value
+
+
+NormalizedEmail = Annotated[EmailStr, BeforeValidator(_normalize_email)]
+
+
 class UserPublic(BaseModel):
     id: int
     email: EmailStr
@@ -17,24 +27,18 @@ class UserPublic(BaseModel):
     last_name: str
     phone_num: str | None
     is_admin: bool
+    is_verified: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class UserRegister(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     phone_num: str | None = Field(default=None, max_length=30)
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_register_email(cls, value: str) -> str:
-        if isinstance(value, str):
-            return validate_email_format(value)
-        return value
 
     @field_validator("password")
     @classmethod
@@ -50,12 +54,27 @@ class UserRegister(BaseModel):
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
-    @field_validator("email", mode="before")
+
+class RegisterAcceptedResponse(BaseModel):
+    email: EmailStr
+    message: str
+
+
+class EmailVerificationRequest(BaseModel):
+    email: NormalizedEmail
+    code: str = Field(min_length=6, max_length=6)
+
+    @field_validator("code")
     @classmethod
-    def normalize_login_email(cls, value: str) -> str:
-        if isinstance(value, str):
-            return validate_email_format(value)
-        return value
+    def check_code_format(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned.isdigit() or len(cleaned) != 6:
+            raise ValueError("Enter the 6-digit code.")
+        return cleaned
+
+
+class ResendCodeRequest(BaseModel):
+    email: NormalizedEmail

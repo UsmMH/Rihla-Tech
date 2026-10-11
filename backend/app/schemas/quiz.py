@@ -52,8 +52,12 @@ class TripPlanPublic(BaseModel):
     theme: str | None
     budget_tier: str | None
     include_flights: bool
+    flight_trip_type: str | None = None
     include_hotels: bool
     status: str
+    selected_hotel: str | None = None
+    origin_airport: str | None = None
+    destination_airport: str | None = None
 
     model_config = {"from_attributes": True}
 

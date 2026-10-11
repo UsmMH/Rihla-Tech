@@ -59,10 +59,10 @@ function TripPlanner() {
     clearLastTripId();
   }
 
-  function goToResult(id: number) {
+  function goToResult(id: number, hasDestination = true) {
     setTripPlanId(id);
     saveLastTripId(id);
-    setPage("result");
+    setPage(hasDestination ? "result" : "destinations");
   }
 
   function startNewTrip() {
@@ -72,10 +72,10 @@ function TripPlanner() {
     setPage("quiz");
   }
 
-  function openTrip(id: number) {
+  function openTrip(id: number, hasDestination = true) {
     setTripPlanId(id);
     saveLastTripId(id);
-    setPage("result");
+    setPage(hasDestination ? "result" : "destinations");
   }
 
   function openCommunityTrip(id: number) {

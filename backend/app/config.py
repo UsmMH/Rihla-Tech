@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     mapbox_access_token: str | None = None
     duffel_access_token: str | None = None
+    serpapi_api_key: str | None = None
+    serpapi_mock: bool = False
+    serpapi_monthly_cap: int = 210
+    serpapi_hourly_cap: int = 45
+    serpapi_user_monthly_cap: int = 30
+    serpapi_cache_ttl_hours: int = 24
+    # development | production — empty locally; Render sets APP_ENV=production (see is_production_environment)
+    app_env: str = ""
+    resend_api_key: str | None = None
+    resend_from_email: str = "RihlaTech <onboarding@resend.dev>"
+    require_email_verification: bool = True
 
     @property
     def cors_origin_list(self) -> list[str]:

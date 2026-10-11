@@ -64,20 +64,6 @@ export interface TripListItem {
   updated_at: string;
 }
 
-export interface TripAlternative {
-  title: string;
-  tagline: string;
-  highlights: string[];
-  budget_note: string;
-  match_percent: number;
-}
-
-export interface EditTripResult {
-  alternatives: TripAlternative[];
-  source: string;
-  fallback_reason: string | null;
-}
-
 export interface StoredChatMessage {
   id: number;
   role: "user" | "assistant";
@@ -132,15 +118,63 @@ export interface FlightOffer {
   outbound: FlightSegment;
   inbound: FlightSegment | null;
   booking_url: string | null;
+  leg?: FlightSegment;
+  can_book?: boolean;
+  can_pick_return?: boolean;
+}
+
+export interface FlightBookingOption {
+  provider: string;
+  price: string;
+  url: string;
+  post_data: string;
+}
+
+export interface FlightBookingResult {
+  options: FlightBookingOption[];
+  fallback_url: string;
+  unavailable?: boolean;
+  unavailable_reason?: string | null;
 }
 
 export interface FlightsResult {
   offers: FlightOffer[];
   search_url: string;
   source: string;
-  fallback_reason: string | null;
-  origin_code: string | null;
-  destination_code: string | null;
+  unavailable_reason?: string | null;
+  fallback_reason?: string | null;
+  origin_code?: string | null;
+  destination_code?: string | null;
+  origin_airport?: string | null;
+  destination_airport?: string | null;
+  trip_type?: string;
+  stale?: boolean;
+  refresh_failed?: boolean;
+}
+
+export type TripFlightsQuery = {
+  cachedOnly?: boolean;
+  tripType?: "round" | "one_way";
+  refresh?: boolean;
+};
+
+function normalizeFlightOffer(raw: FlightOffer & { can_book?: boolean; can_pick_return?: boolean }): FlightOffer {
+  const leg = raw.leg ?? raw.outbound;
+  return {
+    ...raw,
+    outbound: leg,
+    inbound: raw.inbound ?? null,
+    booking_url: raw.booking_url ?? null,
+    can_book: raw.can_book ?? false,
+    can_pick_return: raw.can_pick_return ?? false,
+  };
+}
+
+function normalizeFlightsResult(raw: FlightsResult): FlightsResult {
+  return {
+    ...raw,
+    offers: (raw.offers ?? []).map((offer) => normalizeFlightOffer(offer)),
+  };
 }
 
 export interface HotelOption {
@@ -219,17 +253,81 @@ export async function getTrip(tripPlanId: number): Promise<TripDetail> {
   return normalizeTripDetail(result);
 }
 
-export async function getTripFlights(tripPlanId: number): Promise<FlightsResult> {
-  return apiFetch<FlightsResult>(`/trips/${tripPlanId}/flights`);
+export async function getTripFlights(
+  tripPlanId: number,
+  opts: TripFlightsQuery = {},
+): Promise<FlightsResult> {
+  const params = new URLSearchParams({ trip_type: opts.tripType ?? "round" });
+  params.set("cached_only", opts.cachedOnly === false ? "false" : "true");
+  if (opts.refresh) {
+    params.set("refresh", "true");
+  }
+  const result = await apiFetch<FlightsResult>(`/trips/${tripPlanId}/flights?${params}`);
+  return normalizeFlightsResult(result);
+}
+
+/** Cache peek first; live search when nothing is loaded yet (or airports still need resolving). */
+export function resolveFlightTripType(
+  plan: { flight_trip_type?: string | null; start_date?: string | null; end_date?: string | null },
+): "round" | "one_way" {
+  const stored = plan.flight_trip_type;
+  if (stored === "one_way" || stored === "round") return stored;
+  if (plan.start_date && plan.end_date && plan.end_date > plan.start_date) return "round";
+  return "one_way";
+}
+
+export async function loadTripFlights(
+  tripPlanId: number,
+  tripType: "round" | "one_way" = "round",
+): Promise<FlightsResult> {
+  const cached = await getTripFlights(tripPlanId, { cachedOnly: true, tripType });
+  if (cached.offers.length > 0) {
+    return cached;
+  }
+  const reason = cached.unavailable_reason;
+  if (reason === "not_loaded" || reason === "no_airport") {
+    return getTripFlights(tripPlanId, { cachedOnly: false, tripType });
+  }
+  return cached;
+}
+
+export async function getFlightBookingOptions(
+  tripPlanId: number,
+  offerId: string,
+): Promise<FlightBookingResult> {
+  return apiFetch<FlightBookingResult>(`/trips/${tripPlanId}/flights/${offerId}/booking`, {
+    method: "POST",
+  });
+}
+
+export async function getReturnFlights(tripPlanId: number, outboundOfferId: string): Promise<FlightsResult> {
+  const result = await apiFetch<FlightsResult>(`/trips/${tripPlanId}/flights/${outboundOfferId}/returns`, {
+    method: "POST",
+  });
+  return normalizeFlightsResult(result);
+}
+
+/** Open airline checkout in a new tab (must run from a click handler). */
+export function submitFlightBookingOption(option: FlightBookingOption): void {
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = option.url;
+  form.target = "_blank";
+  form.rel = "noopener noreferrer";
+  for (const [key, value] of new URLSearchParams(option.post_data)) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = key;
+    input.value = value;
+    form.appendChild(input);
+  }
+  document.body.appendChild(form);
+  form.submit();
+  form.remove();
 }
 
 export async function getTripHotels(tripPlanId: number): Promise<HotelsResult> {
   return apiFetch<HotelsResult>(`/trips/${tripPlanId}/hotels`);
-}
-
-export async function enrichTripPlaces(tripPlanId: number): Promise<TripDetail> {
-  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/enrich-places`, { method: "POST" });
-  return normalizeTripDetail(result);
 }
 
 const LAST_TRIP_KEY = "rihlatech_last_trip_id";
@@ -266,16 +364,6 @@ export function clearLastTripId(): void {
 export async function listTrips(): Promise<TripListItem[]> {
   const result = await apiFetch<{ trips: TripListItem[] }>("/trips");
   return result.trips;
-}
-
-export async function editTrip(
-  tripPlanId: number,
-  prompt = "Suggest 3 alternative destinations similar to this trip.",
-): Promise<EditTripResult> {
-  return apiFetch<EditTripResult>(`/trips/${tripPlanId}/edit`, {
-    method: "POST",
-    body: JSON.stringify({ prompt }),
-  });
 }
 
 export async function getChatMessages(tripPlanId: number): Promise<StoredChatMessage[]> {
@@ -324,16 +412,4 @@ export async function sendConsultMessage(
 
 export async function deleteTrip(tripPlanId: number): Promise<void> {
   await apiFetch<void>(`/trips/${tripPlanId}`, { method: "DELETE" });
-}
-
-export async function updatePlaceLocation(
-  tripPlanId: number,
-  placeId: number,
-  payload: { label: string; latitude: number; longitude: number; mapbox_id?: string | null },
-): Promise<TripDetail> {
-  const result = await apiFetch<TripDetail>(`/trips/${tripPlanId}/places/${placeId}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-  return normalizeTripDetail(result);
 }

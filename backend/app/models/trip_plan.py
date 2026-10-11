@@ -22,12 +22,16 @@ class TripPlan(Base):
     theme: Mapped[str | None] = mapped_column(String(50), nullable=True)
     budget_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
     include_flights: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    flight_trip_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
     include_hotels: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False)
     itinerary_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
     is_shared: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     share_caption: Mapped[str | None] = mapped_column(String(500), nullable=True)
     shared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    selected_hotel: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    origin_airport: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    destination_airport: Mapped[str | None] = mapped_column(String(3), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

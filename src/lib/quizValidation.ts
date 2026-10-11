@@ -161,11 +161,14 @@ export function isQuestionStepReady(
   value: AnswerValue | undefined,
   cityMeta?: { confirmedFromList: boolean; searchSettled: boolean; hasSuggestions: boolean },
 ): boolean {
+  if (question.question_type === "choice" && question.key === "travel_extras" && value === undefined) {
+    return true;
+  }
+
   if (value === undefined) return false;
 
   switch (question.question_type) {
     case "choice":
-      if (question.key === "travel_extras" && value === undefined) return true;
       return validateChoice(question, value) === null;
     case "date_range": {
       const dates = value as { start: string; end: string };

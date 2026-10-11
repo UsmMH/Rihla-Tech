@@ -5,6 +5,7 @@ import { navigate } from "@/lib/navigation";
 import HomePage from "@/pages/HomePage";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
+import VerifyEmailPage from "@/pages/VerifyEmailPage";
 
 function getBasePath(): string {
   return import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -23,6 +24,7 @@ function getAppPath(): string {
 function AppRoutes() {
   const { isAuthenticated, isLoading } = useAuth();
   const [path, setPath] = useState(getAppPath);
+  const [pendingVerification, setPendingVerification] = useState<{ email: string; autoSend: boolean } | null>(null);
 
   useEffect(() => {
     const onPopState = () => setPath(getAppPath());
@@ -49,10 +51,27 @@ function AppRoutes() {
   }
 
   if (!isAuthenticated) {
+    if (pendingVerification) {
+      return (
+        <VerifyEmailPage
+          email={pendingVerification.email}
+          autoSendOnMount={pendingVerification.autoSend}
+          onVerified={() => {
+            setPendingVerification(null);
+            navigate("/");
+          }}
+          onBack={() => {
+            setPendingVerification(null);
+            navigate("/login");
+          }}
+        />
+      );
+    }
+
     if (path === "/register") {
       return (
         <RegisterPage
-          onSuccess={() => navigate("/")}
+          onSuccess={(email) => setPendingVerification({ email, autoSend: false })}
           onGoLogin={() => navigate("/login")}
         />
       );
@@ -62,6 +81,7 @@ function AppRoutes() {
       <LoginPage
         onSuccess={() => navigate("/")}
         onGoRegister={() => navigate("/register")}
+        onUnverified={(email) => setPendingVerification({ email, autoSend: true })}
       />
     );
   }

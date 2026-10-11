@@ -12,7 +12,7 @@ import {
 import { lightTheme } from "@/themes";
 
 type RegisterPageProps = {
-  onSuccess: () => void;
+  onSuccess: (email: string) => void;
   onGoLogin: () => void;
 };
 
@@ -60,14 +60,15 @@ export default function RegisterPage({ onSuccess, onGoLogin }: RegisterPageProps
     setIsSubmitting(true);
 
     try {
+      const normalizedEmail = normalizeEmail(email);
       await register({
         first_name: firstName.trim(),
         last_name: lastName.trim(),
-        email: normalizeEmail(email),
+        email: normalizedEmail,
         password,
         phone_num: phone.trim() || undefined,
       });
-      onSuccess();
+      onSuccess(normalizedEmail);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Registration failed");
     } finally {
