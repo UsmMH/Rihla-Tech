@@ -32,6 +32,7 @@ _SCHEMA_COLUMNS = (
     ("trip_plans", "selected_hotel", "VARCHAR(255)"),
     ("trip_plans", "origin_airport", "VARCHAR(3)"),
     ("trip_plans", "destination_airport", "VARCHAR(3)"),
+    ("trip_plans", "flight_trip_type", "VARCHAR(10)"),
 )
 
 

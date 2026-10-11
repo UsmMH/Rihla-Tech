@@ -52,12 +52,25 @@ QUIZ_QUESTIONS = [
     },
     {
         "phase": "quiz",
+        "key": "flight_trip_type",
+        "title": "Round trip or one way?",
+        "subtitle": "One-way shows bookable fares directly; round trip lets you pick a return.",
+        "question_type": "choice",
+        "multi": False,
+        "sort_order": 5,
+        "options": [
+            {"option_key": "round", "label": "Round trip", "icon": "🔄", "description": "Outbound and return flights"},
+            {"option_key": "one_way", "label": "One way", "icon": "➡️", "description": "Flying there only"},
+        ],
+    },
+    {
+        "phase": "quiz",
         "key": "origin",
         "title": "Which airport are you departing from?",
         "subtitle": "Search by airport or city — used for flight suggestions.",
         "question_type": "text",
         "multi": False,
-        "sort_order": 5,
+        "sort_order": 6,
         "options": [],
     },
     {
@@ -67,7 +80,7 @@ QUIZ_QUESTIONS = [
         "subtitle": "Tell us how many adults and children.",
         "question_type": "travelers",
         "multi": False,
-        "sort_order": 6,
+        "sort_order": 7,
         "options": [],
     },
 ]

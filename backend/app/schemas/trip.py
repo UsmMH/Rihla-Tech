@@ -204,6 +204,7 @@ class FlightSegmentPublic(BaseModel):
     duration: str | None = None
     airline: str
     stops: int = 0
+    layovers: list[str] = Field(default_factory=list)
 
 
 class FlightOfferPublic(BaseModel):
@@ -212,19 +213,43 @@ class FlightOfferPublic(BaseModel):
     price: str
     price_note: str | None = None
     price_amount: float | None = None
-    currency: str = "USD"
-    outbound: FlightSegmentPublic
-    inbound: FlightSegmentPublic | None = None
-    booking_url: str | None = None
+    currency: str = "SAR"
+    leg: FlightSegmentPublic
+    can_pick_return: bool = False
+    can_book: bool = False
 
 
 class FlightsResponse(BaseModel):
     offers: list[FlightOfferPublic]
     search_url: str
-    source: str
-    fallback_reason: str | None = None
-    origin_code: str | None = None
-    destination_code: str | None = None
+    source: str  # serpapi | fixture | unavailable
+    unavailable_reason: str | None = None
+    trip_type: str  # round | one_way
+    origin_airport: str | None = None
+    destination_airport: str | None = None
+    traveler_count: int = 1
+    fetched_at: datetime | None = None
+    stale: bool = False
+    refresh_failed: bool = False
+
+
+class TripAirportsUpdate(BaseModel):
+    origin: str | None = Field(default=None, max_length=255)
+    destination: str | None = Field(default=None, max_length=255)
+
+
+class BookingOptionPublic(BaseModel):
+    provider: str
+    price: str
+    url: str
+    post_data: str
+
+
+class BookingResponse(BaseModel):
+    options: list[BookingOptionPublic]
+    fallback_url: str
+    unavailable: bool = False
+    unavailable_reason: str | None = None
 
 
 class HotelOptionPublic(BaseModel):

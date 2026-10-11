@@ -56,6 +56,9 @@ export default function QuestionFlow({
       if (q.key === "destination" && destinationKnown === "not_sure") {
         return false;
       }
+      if (q.key === "flight_trip_type") {
+        return false;
+      }
       if (q.key === "origin" && includeFlights !== "yes") {
         return false;
       }
@@ -66,6 +69,10 @@ export default function QuestionFlow({
   const step = visibleQuestions[currentStep];
   const selected = step ? answers[step.id] : undefined;
   const cityMeta = step ? cityMetaByQuestion[step.id] : undefined;
+  const flightTripTypeQuestion = questions.find((q) => q.key === "flight_trip_type");
+  const includeFlightsQuestion = questions.find((q) => q.key === "include_flights");
+  const flightTripTypeAnswer =
+    flightTripTypeQuestion ? answers[flightTripTypeQuestion.id] : undefined;
 
   const destinationAnswer = useMemo(() => {
     const destQ = questions.find((q) => q.key === "destination");
@@ -78,8 +85,16 @@ export default function QuestionFlow({
     step?.key === "origin" ? validateCrossFields(questions, answers) : null;
   const progress = visibleQuestions.length ? ((currentStep + 1) / visibleQuestions.length) * 100 : 0;
   const currentError = step ? stepValidationError(step, selected, cityMeta) : null;
+  const includeFlightsYes =
+    includeFlightsQuestion && answers[includeFlightsQuestion.id] === "yes";
+  const flightTypeReady =
+    !includeFlightsYes ||
+    (typeof flightTripTypeAnswer === "string" &&
+      (flightTripTypeAnswer === "round" || flightTripTypeAnswer === "one_way"));
   const canProceed =
-    step && !crossFieldError ? isQuestionStepReady(step, selected, cityMeta) : false;
+    step && !crossFieldError && flightTypeReady
+      ? isQuestionStepReady(step, selected, cityMeta)
+      : false;
   const isLastStep = currentStep === visibleQuestions.length - 1;
 
   const dateValue =
@@ -105,6 +120,11 @@ export default function QuestionFlow({
     setAnswers((prev) => ({ ...prev, [step.id]: value }));
   }
 
+  function setFlightTripType(optionKey: string) {
+    if (!flightTripTypeQuestion) return;
+    setAnswers((prev) => ({ ...prev, [flightTripTypeQuestion.id]: optionKey }));
+  }
+
   function toggleChoice(optionKey: string) {
     if (!step) return;
     if (step.multi) {
@@ -112,6 +132,20 @@ export default function QuestionFlow({
       setAnswer(cur.includes(optionKey) ? cur.filter((x) => x !== optionKey) : [...cur, optionKey]);
     } else {
       setAnswer(optionKey);
+      if (step.key === "include_flights" && optionKey === "yes" && flightTripTypeQuestion) {
+        setAnswers((prev) => {
+          const current = prev[flightTripTypeQuestion.id];
+          if (current === "round" || current === "one_way") return prev;
+          return { ...prev, [flightTripTypeQuestion.id]: "round" };
+        });
+      }
+      if (step.key === "include_flights" && optionKey === "no" && flightTripTypeQuestion) {
+        setAnswers((prev) => {
+          const next = { ...prev };
+          delete next[flightTripTypeQuestion.id];
+          return next;
+        });
+      }
     }
   }
 
@@ -141,6 +175,18 @@ export default function QuestionFlow({
         question_id: q.id,
         value: answers[q.id] ?? (q.key === "travel_extras" ? [] : answers[q.id]!),
       }));
+      if (
+        flightTripTypeQuestion &&
+        includeFlightsQuestion &&
+        answers[includeFlightsQuestion.id] === "yes" &&
+        answers[flightTripTypeQuestion.id] !== undefined &&
+        !payload.some((item) => item.question_id === flightTripTypeQuestion.id)
+      ) {
+        payload.push({
+          question_id: flightTripTypeQuestion.id,
+          value: answers[flightTripTypeQuestion.id]!,
+        });
+      }
       onComplete(payload);
     }
   }
@@ -253,6 +299,67 @@ export default function QuestionFlow({
                       </motion.button>
                     );
                   })}
+                </div>
+              )}
+
+              {step.key === "include_flights" && selected === "yes" && flightTripTypeQuestion && (
+                <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${theme.border}` }}>
+                  <p
+                    style={{
+                      color: theme.heading,
+                      fontSize: "0.88rem",
+                      fontFamily: "system-ui, sans-serif",
+                      fontWeight: 600,
+                      marginBottom: "0.65rem",
+                    }}
+                  >
+                    {flightTripTypeQuestion.title}
+                  </p>
+                  <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+                    {flightTripTypeQuestion.options.map((opt) => {
+                      const isSelected = flightTripTypeAnswer === opt.option_key;
+                      return (
+                        <motion.button
+                          key={opt.id}
+                          type="button"
+                          whileTap={{ scale: 0.97 }}
+                          onClick={() => setFlightTripType(opt.option_key)}
+                          className="flex items-center gap-3 rounded-xl text-left transition-all cursor-pointer w-full"
+                          style={{
+                            padding: "0.65rem 0.75rem",
+                            background: isSelected ? theme.optionBgSelected : theme.optionBg,
+                            border: `1.5px solid ${isSelected ? theme.optionBorderSelected : theme.optionBorder}`,
+                            fontFamily: "system-ui, sans-serif",
+                            minHeight: "48px",
+                          }}
+                        >
+                          {opt.icon && <span style={{ fontSize: "1.15rem", flexShrink: 0 }}>{opt.icon}</span>}
+                          <div className="flex-1 min-w-0">
+                            <div
+                              style={{
+                                fontWeight: 500,
+                                fontSize: "0.85rem",
+                                color: isSelected ? theme.optionLabelSelected : theme.optionLabel,
+                              }}
+                            >
+                              {opt.label}
+                            </div>
+                            {opt.description && (
+                              <div
+                                style={{
+                                  fontSize: "0.68rem",
+                                  color: isSelected ? theme.optionDescSelected : theme.optionDesc,
+                                  marginTop: "0.1rem",
+                                }}
+                              >
+                                {opt.description}
+                              </div>
+                            )}
+                          </div>
+                        </motion.button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 

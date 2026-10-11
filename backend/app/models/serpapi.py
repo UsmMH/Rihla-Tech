@@ -9,7 +9,7 @@ from app.database import Base
 
 # Cache kinds persisted in serpapi_cache.kind (no booking — booking responses are never stored).
 SERPAPI_CACHE_KINDS = frozenset(
-    {"flights_round", "flights_one_way", "flights_return", "hotels"}
+    {"flights_round", "flights_one_way", "flights_return", "hotels", "airport_fail"}
 )
 
 

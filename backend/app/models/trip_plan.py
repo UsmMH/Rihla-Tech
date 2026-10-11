@@ -22,6 +22,7 @@ class TripPlan(Base):
     theme: Mapped[str | None] = mapped_column(String(50), nullable=True)
     budget_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
     include_flights: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    flight_trip_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
     include_hotels: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False)
     itinerary_source: Mapped[str | None] = mapped_column(String(30), nullable=True)

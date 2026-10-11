@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies.auth import get_current_user
+from app.models.trip_plan import TripPlan
 from app.models.user import User
 from app.schemas.quiz import TripPlanPublic
 from app.schemas.trip import (
     ApplyEditRequest,
+    BookingResponse,
     FlightsResponse,
     GenerateTripRequest,
     GenerateTripResponse,
@@ -14,12 +16,14 @@ from app.schemas.trip import (
     SelectDestinationRequest,
     SuggestDestinationsRequest,
     SuggestDestinationsResponse,
+    TripAirportsUpdate,
     TripDetailResponse,
     TripListItem,
     TripListResponse,
 )
 from app.services.destinations import select_destination, suggest_destinations
-from app.services.flights import search_flights
+from app.services.flights import booking_options, search_flights, search_returns, set_trip_airports
+from app.services.rate_limit import enforce_rate_limit
 from app.services.hotels import search_hotels
 from app.services.apply_edit import apply_itinerary_edit
 from app.services.chat import mark_chat_edit_applied
@@ -92,13 +96,88 @@ def get_trip(
     return get_trip_detail(db, current_user, trip_plan_id)
 
 
+FLIGHTS_BURST_SCOPE = "trip_flights_live"
+
+
 @router.get("/{trip_plan_id}/flights", response_model=FlightsResponse)
 def get_trip_flights(
     trip_plan_id: int,
+    request: Request,
+    trip_type: str = Query("round", pattern="^(round|one_way)$"),
+    cached_only: bool = Query(True),
+    refresh: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FlightsResponse:
-    return search_flights(db, current_user, trip_plan_id)
+    if not cached_only:
+        enforce_rate_limit(
+            request,
+            FLIGHTS_BURST_SCOPE,
+            max_calls=10,
+            window_seconds=60,
+            key=f"user:{current_user.id}",
+        )
+    return search_flights(
+        db,
+        current_user,
+        trip_plan_id,
+        trip_type,
+        cached_only=cached_only,
+        refresh=refresh,
+    )
+
+
+@router.post("/{trip_plan_id}/flights/{offer_id}/returns", response_model=FlightsResponse)
+def get_return_flights(
+    trip_plan_id: int,
+    offer_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FlightsResponse:
+    enforce_rate_limit(
+        request,
+        FLIGHTS_BURST_SCOPE,
+        max_calls=10,
+        window_seconds=60,
+        key=f"user:{current_user.id}",
+    )
+    return search_returns(db, current_user, trip_plan_id, offer_id)
+
+
+@router.post("/{trip_plan_id}/flights/{offer_id}/booking", response_model=BookingResponse)
+def get_flight_booking(
+    trip_plan_id: int,
+    offer_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BookingResponse:
+    enforce_rate_limit(
+        request,
+        FLIGHTS_BURST_SCOPE,
+        max_calls=10,
+        window_seconds=60,
+        key=f"user:{current_user.id}",
+    )
+    return booking_options(db, current_user, trip_plan_id, offer_id)
+
+
+@router.put("/{trip_plan_id}/airports", response_model=TripPlanPublic)
+def update_trip_airports(
+    trip_plan_id: int,
+    payload: TripAirportsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TripPlanPublic:
+    trip: TripPlan = set_trip_airports(
+        db,
+        current_user,
+        trip_plan_id,
+        origin=payload.origin,
+        destination=payload.destination,
+    )
+    return TripPlanPublic.model_validate(trip)
 
 
 @router.get("/{trip_plan_id}/hotels", response_model=HotelsResponse)

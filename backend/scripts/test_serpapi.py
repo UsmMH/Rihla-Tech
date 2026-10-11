@@ -4,10 +4,11 @@ import logging
 import os
 import secrets
 import sys
+import threading
 import traceback
 import unittest
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -22,9 +23,20 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models.chat_message import ChatMessage  # noqa: F401 — register ORM
 from app.models.community import TripComment, TripSave, TripVote  # noqa: F401
-from app.models.serpapi import SerpApiUsage  # noqa: F401 — register table
-from app.models.trip_plan import TripPlan  # noqa: F401
+from datetime import date
+
+from fastapi import HTTPException
+
+from app.models.serpapi import SerpApiCache, SerpApiUsage  # noqa: F401 — register table
+from app.models.trip_plan import TripPlan
 from app.models.user import User
+from app.services.flights import (
+    _flight_cache_key,
+    _resolve_airport_code,
+    booking_options,
+    search_flights,
+    search_returns,
+)
 from app.services.serpapi import (
     SERPAPI_LOCALE,
     SerpApiUnavailable,
@@ -406,6 +418,331 @@ try:
     except ValueError:
         pass
     print("OK put_cached rejects post_data")
+
+    print("flights backend (mock)")
+    flight_user = db.get(User, user_id)
+    trip = TripPlan(
+        user_id=user_id,
+        destination="Paris, France",
+        origin="King Khalid International Airport (RUH), Riyadh",
+        start_date=date(2026, 11, 25),
+        end_date=date(2026, 11, 30),
+        num_adults=1,
+        num_children=0,
+        include_flights=True,
+        origin_airport="RUH",
+        destination_airport="CDG",
+        status="ready",
+    )
+    db.add(trip)
+    db.commit()
+    db.refresh(trip)
+
+    settings.serpapi_mock = True
+    with patch("app.services.serpapi.serpapi_mock_enabled", return_value=True):
+        outbound = search_flights(db, flight_user, trip.id, "round", cached_only=False)
+        assert outbound.source == "fixture"
+        assert outbound.offers
+        pick = next(o for o in outbound.offers if o.can_pick_return)
+        offer_id = pick.id
+
+        captured_params: list[dict] = []
+        real_search = serpapi_search
+
+        def _recording_search(session, user, params):
+            captured_params.append(dict(params))
+            return real_search(session, user, params)
+
+        with patch("app.services.flights.serpapi_search", side_effect=_recording_search):
+            first_returns = search_returns(db, flight_user, trip.id, offer_id)
+            assert first_returns.offers
+            second_returns = search_returns(db, flight_user, trip.id, offer_id)
+            assert second_returns.offers
+            assert len(captured_params) == 1, "return search must be cached on second call"
+
+        params = captured_params[0]
+        assert params.get("departure_id") == "RUH"
+        assert params.get("arrival_id") == "CDG"
+        assert params.get("departure_token")
+        assert "booking_token" not in params
+
+        return_offer = next(o for o in first_returns.offers if o.can_book)
+        before_booking_rows = int(
+            db.scalar(select(func.count()).select_from(SerpApiCache).where(SerpApiCache.kind == "flights_return"))
+            or 0
+        )
+        booking = booking_options(db, flight_user, trip.id, return_offer.id)
+        assert booking.options and booking.options[0].post_data
+        after_booking_rows = int(
+            db.scalar(select(func.count()).select_from(SerpApiCache).where(SerpApiCache.kind == "flights_return"))
+            or 0
+        )
+        assert before_booking_rows == after_booking_rows, "booking must not write cache rows"
+
+        try:
+            search_returns(db, flight_user, trip.id, "not-in-cache-offer")
+            raise AssertionError("expected 404 for unknown offer")
+        except HTTPException as exc:
+            assert exc.status_code == 404
+        assert len(captured_params) == 1, "404 must not trigger SerpApi search"
+
+    db.execute(delete(SerpApiCache).where(SerpApiCache.trip_plan_id == trip.id))
+    db.commit()
+    with patch("app.services.serpapi.serpapi_mock_enabled", return_value=False):
+        settings.serpapi_api_key = None
+        settings.serpapi_mock = False
+        unconfigured = search_flights(db, flight_user, trip.id, "round", cached_only=False)
+        assert unconfigured.source == "unavailable"
+        assert unconfigured.unavailable_reason == "not_configured"
+        assert unconfigured.search_url.startswith("https://www.google.com/travel/flights")
+
+    with patch("app.services.flights.search_airports", return_value=[]):
+        assert _resolve_airport_code("King Khalid International Airport (RUH), Riyadh", db, trip.id, "origin") == "RUH"
+
+    with patch("app.services.flights.search_airports", return_value=[]):
+        with patch("app.services.llm.llm_configured", return_value=True):
+            with patch("app.services.llm.complete_chat", return_value="ZZZ"):
+                assert _resolve_airport_code("Mystery City", db, trip.id, "destination") is None
+
+    print("review fixes")
+    trip_no_airports = TripPlan(
+        user_id=user_id,
+        destination="Paris, France",
+        origin="Riyadh, Saudi Arabia",
+        start_date=date(2026, 11, 25),
+        end_date=date(2026, 11, 30),
+        num_adults=1,
+        num_children=0,
+        include_flights=True,
+        status="ready",
+    )
+    db.add(trip_no_airports)
+    db.commit()
+    db.refresh(trip_no_airports)
+
+    with patch("app.services.flights.search_airport_suggestions") as mock_duffel:
+        with patch("app.services.flights.search_airports") as mock_airports:
+            with patch("app.services.flights.serpapi_search") as mock_serp:
+                with patch("app.services.llm.complete_chat") as mock_llm:
+                    cached = search_flights(db, flight_user, trip_no_airports.id, "round", cached_only=True)
+                    assert cached.unavailable_reason == "no_airport"
+                    assert mock_duffel.call_count == 0
+                    assert mock_airports.call_count == 0
+                    assert mock_serp.call_count == 0
+                    assert mock_llm.call_count == 0
+
+    with patch(
+        "app.services.flights.search_airports",
+        return_value=[
+            {
+                "label": "Charles de Gaulle (CDG), Paris, France",
+                "iata_code": "CDG",
+                "city": "Paris",
+                "latitude": 1.0,
+                "longitude": 2.0,
+                "kind": "airport",
+            },
+            {
+                "label": "Paris Beauvais (BVA), Beauvais, France",
+                "iata_code": "BVA",
+                "city": "Beauvais",
+                "latitude": 1.0,
+                "longitude": 2.0,
+                "kind": "airport",
+            },
+        ],
+    ):
+        assert _resolve_airport_code("Paris, France", db, trip_no_airports.id, "destination") == "CDG"
+    with patch(
+        "app.services.flights.search_airports",
+        return_value=[
+            {
+                "label": "Paris Beauvais (BVA), Beauvais, France",
+                "iata_code": "BVA",
+                "city": "Beauvais",
+                "latitude": 1.0,
+                "longitude": 2.0,
+                "kind": "airport",
+            },
+        ],
+    ):
+        with patch("app.services.llm.llm_configured", return_value=False):
+            assert _resolve_airport_code("Paris, France", db, trip_no_airports.id, "destination") is None
+
+    trip_no_airports.origin_airport = "RUH"
+    trip_no_airports.destination_airport = "CDG"
+    db.commit()
+    round_key = _flight_cache_key(trip_no_airports, "RUH", "CDG", "round")
+    stale_offer_id = "stale-offer-1"
+    stale_payload = {
+        "offers": [
+            {
+                "id": stale_offer_id,
+                "airline": "Test Air",
+                "price": "SAR 100",
+                "price_note": "note",
+                "price_amount": 100,
+                "currency": "SAR",
+                "leg": {
+                    "origin": "RUH",
+                    "origin_code": "RUH",
+                    "destination": "CDG",
+                    "destination_code": "CDG",
+                    "airline": "Test Air",
+                    "stops": 0,
+                    "layovers": [],
+                },
+                "can_pick_return": False,
+                "can_book": True,
+                "booking_token": "book-stale",
+            }
+        ],
+        "search_url": "",
+        "source": "fixture",
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+    put_cached(db, trip_no_airports.id, "flights_round", round_key, stale_payload)
+    row = (
+        db.query(SerpApiCache)
+        .filter(
+            SerpApiCache.trip_plan_id == trip_no_airports.id,
+            SerpApiCache.kind == "flights_round",
+            SerpApiCache.cache_key == round_key,
+        )
+        .one()
+    )
+    row.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+
+    booking_stale = booking_options(db, flight_user, trip_no_airports.id, stale_offer_id)
+    assert booking_stale.unavailable is True
+    assert booking_stale.unavailable_reason == "refresh_needed"
+    assert booking_stale.options == []
+
+    search_counts: list[int] = []
+    search_lock = threading.Lock()
+
+    def _counting_search(session, user, params):
+        with search_lock:
+            search_counts.append(1)
+        return serpapi_search(session, user, params)
+
+    with patch("app.services.serpapi.serpapi_mock_enabled", return_value=True):
+        with patch("app.services.flights.serpapi_search", side_effect=_counting_search):
+            barrier = threading.Barrier(2)
+
+            def _refresh():
+                barrier.wait()
+                session = SessionLocal()
+                try:
+                    user = session.get(User, user_id)
+                    search_flights(
+                        session,
+                        user,
+                        concurrent_trip_id,
+                        "round",
+                        cached_only=False,
+                        refresh=True,
+                    )
+                    session.commit()
+                finally:
+                    session.close()
+
+            trip.origin_airport = "RUH"
+            trip.destination_airport = "CDG"
+            db.commit()
+            concurrent_trip_id = trip.id
+            base_key = _flight_cache_key(trip, "RUH", "CDG", "round")
+            warm_payload = {
+                "offers": stale_payload["offers"],
+                "search_url": "https://www.google.com/travel/flights?q=warm",
+                "source": "fixture",
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+            put_cached(db, trip.id, "flights_round", base_key, warm_payload)
+            warm_row = (
+                db.query(SerpApiCache)
+                .filter(
+                    SerpApiCache.trip_plan_id == trip.id,
+                    SerpApiCache.kind == "flights_round",
+                    SerpApiCache.cache_key == base_key,
+                )
+                .one()
+            )
+            warm_row.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+            warm_row.created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+            db.commit()
+
+            t1 = threading.Thread(target=_refresh)
+            t2 = threading.Thread(target=_refresh)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+            assert len(search_counts) == 1, "concurrent stale refresh must perform one SerpApi search"
+
+    fail_payload = {
+        "offers": [
+            {
+                "id": "keep-me",
+                "airline": "Keep Air",
+                "price": "SAR 200",
+                "price_note": "note",
+                "price_amount": 200,
+                "currency": "SAR",
+                "leg": {
+                    "origin": "RUH",
+                    "origin_code": "RUH",
+                    "destination": "CDG",
+                    "destination_code": "CDG",
+                    "airline": "Keep Air",
+                    "stops": 0,
+                    "layovers": [],
+                },
+                "can_pick_return": False,
+                "can_book": False,
+            }
+        ],
+        "search_url": "",
+        "source": "fixture",
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+    put_cached(db, trip_no_airports.id, "flights_round", round_key, fail_payload)
+    fail_row = (
+        db.query(SerpApiCache)
+        .filter(
+            SerpApiCache.trip_plan_id == trip_no_airports.id,
+            SerpApiCache.kind == "flights_round",
+            SerpApiCache.cache_key == round_key,
+        )
+        .one()
+    )
+    fail_row.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    fail_row.created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    db.commit()
+
+    with patch("app.services.flights.serpapi_search", side_effect=SerpApiUnavailable("error")):
+        refreshed = search_flights(
+            db,
+            flight_user,
+            trip_no_airports.id,
+            "round",
+            cached_only=False,
+            refresh=True,
+        )
+    assert refreshed.refresh_failed is True
+    assert refreshed.stale is True
+    assert refreshed.offers and refreshed.offers[0].id == "keep-me"
+    assert refreshed.search_url.startswith("https://www.google.com/travel/flights")
+
+    db.execute(delete(SerpApiCache).where(SerpApiCache.trip_plan_id == trip_no_airports.id))
+    db.execute(delete(TripPlan).where(TripPlan.id == trip_no_airports.id))
+    print("OK review fixes")
+
+    db.execute(delete(SerpApiCache).where(SerpApiCache.trip_plan_id == trip.id))
+    db.execute(delete(TripPlan).where(TripPlan.id == trip.id))
+    db.commit()
+    print("OK flights backend")
 
 finally:
     if test_users:

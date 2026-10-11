@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 from collections.abc import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -250,16 +249,8 @@ def search_places(query: str, *, limit: int = 5) -> list[dict]:
     return results
 
 
-def _airport_dedupe_key(item: dict) -> str:
-    iata = item.get("iata_code")
-    if isinstance(iata, str) and iata:
-        return iata.upper()
-    label = str(item.get("label") or "")
-    return label.split("(")[0].split(",")[0].strip().lower()
-
-
 def search_airports(query: str, *, limit: int = 8) -> list[dict]:
-    """Search airports for origin autocomplete when flights are included."""
+    """Airport autocomplete via Duffel places only."""
     cleaned = query.strip()
     if len(cleaned) < 2:
         return []
@@ -267,27 +258,8 @@ def search_airports(query: str, *, limit: int = 8) -> list[dict]:
     from app.services.flights import search_airport_suggestions
 
     results = search_airport_suggestions(cleaned, limit=limit)
-    seen_keys = {_airport_dedupe_key(item) for item in results}
-
-    if len(results) < limit:
-        for item in _searchbox_forward(
-            cleaned,
-            poi_category="airport",
-            normalize=_normalize_searchbox_airport,
-            limit=limit,
-            log_label="airport",
-        ):
-            key = _airport_dedupe_key(item)
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            results.append(item)
-            if len(results) >= limit:
-                break
-
     if not results and "airport" not in cleaned.lower():
         return search_airports(f"{cleaned} airport", limit=limit)
-
     return results[:limit]
 
 
@@ -329,44 +301,6 @@ def _searchbox_forward(
         if item:
             results.append(item)
     return results
-
-
-def _normalize_searchbox_airport(feature: dict) -> dict | None:
-    geometry = feature.get("geometry", {})
-    coords = geometry.get("coordinates")
-    if not isinstance(coords, list) or len(coords) < 2:
-        return None
-
-    props = feature.get("properties", {}) or {}
-    name = str(props.get("name") or props.get("name_preferred") or "").strip()
-    if not name:
-        return None
-
-    lng, lat = float(coords[0]), float(coords[1])
-    context = props.get("context") or {}
-    city = str(context.get("place", {}).get("name") or "").strip()
-    country = str(context.get("country", {}).get("name") or "").strip()
-    if city.lower().startswith("al-"):
-        city = city[3:].strip() or city
-
-    iata_match = re.search(r"\b([A-Z]{3})\b", name)
-    iata = iata_match.group(1) if iata_match else None
-    display_name = f"{name} ({iata})" if iata else name
-    if city and country:
-        label = f"{display_name}, {city}, {country}"
-    elif country:
-        label = f"{display_name}, {country}"
-    else:
-        label = display_name
-
-    return {
-        "label": label,
-        "latitude": lat,
-        "longitude": lng,
-        "kind": "airport",
-        "iata_code": iata,
-        "city": city or None,
-    }
 
 
 def _normalize_searchbox_lodging(feature: dict) -> dict | None:
