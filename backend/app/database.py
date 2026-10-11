@@ -5,7 +5,17 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+
+def _sqlalchemy_database_url(url: str) -> str:
+    """Use psycopg2 (in requirements); bare postgresql:// defaults to psycopg v3 on newer SQLAlchemy."""
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg2://" + url[len("postgres://") :]
+    return url
+
+
+engine = create_engine(_sqlalchemy_database_url(settings.database_url), pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
